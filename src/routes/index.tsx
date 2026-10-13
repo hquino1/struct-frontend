@@ -1,10 +1,24 @@
-import { createFileRoute } from '@tanstack/react-router';
+import { createFileRoute, redirect, useNavigate } from '@tanstack/react-router';
+import { fetchUserAttributes, getCurrentUser, signOut } from 'aws-amplify/auth';
+import '@/lib/auth';
 import { useState, useRef, useEffect, type CSSProperties } from 'react';
-import { ArrowDownToLine, ArrowRight, Bell, BookOpen, Box, Braces, Check, CheckCheck, ChevronDown, ChevronRight, Code2, Database, ExternalLink, FileCode2, FolderGit2, GitBranch, GitFork, Globe, HelpCircle, Layers, Maximize, MoreHorizontal, PanelLeftClose, PanelLeftOpen, Network, Plus, Search, Settings2, ShieldCheck, Sparkles, TriangleAlert, Upload, Workflow, X, Zap, ZoomIn, ZoomOut } from 'lucide-react';
+import { ArrowDownToLine, ArrowRight, Bell, BookOpen, Box, Braces, Check, CheckCheck, ChevronDown, ChevronRight, Code2, Database, ExternalLink, FileCode2, FolderGit2, GitBranch, GitFork, Globe, HelpCircle, Layers, Maximize, Moon, MoreHorizontal, PanelLeftClose, PanelLeftOpen, Network, Plus, Search, Settings2, ShieldCheck, Sparkles, Sun, TriangleAlert, Upload, Workflow, X, Zap, ZoomIn, ZoomOut } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { useTheme } from '@/hooks/use-theme';
 import { nodesForView, edges, views, insights, type View, type GraphNode } from '@/lib/architecture-data';
 
 export const Route = createFileRoute('/')({
+  // Cognito tokens live in browser storage, so the auth check has to run on the client.
+  ssr: false,
+  beforeLoad: async () => {
+    try {
+      const { signInDetails } = await getCurrentUser();
+      const attributes = await fetchUserAttributes().catch(() => undefined);
+      return { userEmail: attributes?.email ?? signInDetails?.loginId ?? '' };
+    } catch {
+      throw redirect({ to: '/login' });
+    }
+  },
   head: () => ({ meta: [ { title: 'Struct — Codebase Intelligence' }, { name: 'description', content: 'Explore architecture, dependencies, and workflows in an interactive codebase visualization workspace.' }, { property: 'og:title', content: 'Struct — Codebase Intelligence' }, { property: 'og:description', content: 'Turn complex code into a clear picture. Explore your system architecture with Struct.' }, { property: 'og:type', content: 'website' }, { name: 'twitter:card', content: 'summary_large_image' } ] }),
   component: Index,
 });
@@ -27,6 +41,10 @@ function Index() {
   const [filter, setFilter] = useState('All components');
   const [analyzing, setAnalyzing] = useState(false);
   const [updated, setUpdated] = useState(false);
+  const { dark, toggleTheme } = useTheme();
+  const { userEmail } = Route.useRouteContext();
+  const initials = userEmail.slice(0, 2).toUpperCase() || '?';
+  const navigate = useNavigate();
   const fileRef = useRef<HTMLInputElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const nodes = nodesForView(view);
@@ -54,11 +72,11 @@ function Index() {
       <div className="sidebar-bottom">
         <Button variant="ghost" className="sidebar-link" title="Documentation" aria-label="Documentation" onClick={() => setModal('documentation')}><BookOpen/><span className="sidebar-text">Documentation</span></Button>
         <Button variant="ghost" className="sidebar-link" title="Help & feedback" aria-label="Help & feedback" onClick={() => setModal('help')}><HelpCircle/><span className="sidebar-text">Help & feedback</span></Button>
-        <Button variant="ghost" className="user-row" title="Account settings" aria-label="Account settings" onClick={() => setModal('account')}><div className="avatar">HQ</div><div className="sidebar-text text-left"><div className="text-[11px] font-semibold">Hector Quiñones</div><div className="text-[10px] text-muted-foreground mt-1">Personal · Free plan</div></div><MoreHorizontal className="sidebar-text ml-auto"/></Button>
+        <Button variant="ghost" className="user-row" title="Account settings" aria-label="Account settings" onClick={() => setModal('account')}><div className="avatar">{initials}</div><div className="sidebar-text text-left"><div className="text-[11px] font-semibold truncate max-w-32" title={userEmail}>{userEmail}</div><div className="text-[10px] text-muted-foreground mt-1">Personal · Free plan</div></div><MoreHorizontal className="sidebar-text ml-auto"/></Button>
       </div>
     </aside>
     <div className="min-w-0">
-      <header className="topbar"><div className="topbar-start"><Button variant="ghost" size="icon" className="sidebar-toggle" title={sidebarOpen ? 'Close sidebar' : 'Open sidebar'} aria-label={sidebarOpen ? 'Close sidebar' : 'Open sidebar'} aria-expanded={sidebarOpen} aria-controls="workspace-sidebar" onClick={() => setSidebarOpen(open => !open)}>{sidebarOpen ? <PanelLeftClose/> : <PanelLeftOpen/>}</Button><div className="breadcrumb"><span className="text-muted-foreground">Projects</span><ChevronRight size={12} className="text-muted-foreground"/><span className="font-medium">{project}</span><ChevronRight size={12} className="text-muted-foreground"/><span className="text-muted-foreground">Overview</span></div></div><div className="topbar-actions"><label className="search-box"><Search size={13}/><input ref={searchRef} value={query} onChange={e => setQuery(e.target.value)} placeholder="Search components..." aria-label="Search components"/><span className="key">⌘ K</span></label><Button variant="ghost" size="icon" title="Notifications" onClick={() => setModal('notifications')} className="text-muted-foreground h-8 w-8"><Bell/></Button><div className="avatar">HQ</div></div></header>
+      <header className="topbar"><div className="topbar-start"><Button variant="ghost" size="icon" className="sidebar-toggle" title={sidebarOpen ? 'Close sidebar' : 'Open sidebar'} aria-label={sidebarOpen ? 'Close sidebar' : 'Open sidebar'} aria-expanded={sidebarOpen} aria-controls="workspace-sidebar" onClick={() => setSidebarOpen(open => !open)}>{sidebarOpen ? <PanelLeftClose/> : <PanelLeftOpen/>}</Button><div className="breadcrumb"><span className="text-muted-foreground">Projects</span><ChevronRight size={12} className="text-muted-foreground"/><span className="font-medium">{project}</span><ChevronRight size={12} className="text-muted-foreground"/><span className="text-muted-foreground">Overview</span></div></div><div className="topbar-actions"><label className="search-box"><Search size={13}/><input ref={searchRef} value={query} onChange={e => setQuery(e.target.value)} placeholder="Search components..." aria-label="Search components"/><span className="key">⌘ K</span></label><Button variant="ghost" size="icon" title={dark ? 'Switch to light mode' : 'Switch to dark mode'} aria-label={dark ? 'Switch to light mode' : 'Switch to dark mode'} onClick={toggleTheme} className="text-muted-foreground h-8 w-8">{dark ? <Sun/> : <Moon/>}</Button><Button variant="ghost" size="icon" title="Notifications" onClick={() => setModal('notifications')} className="text-muted-foreground h-8 w-8"><Bell/></Button><div className="avatar">{initials}</div></div></header>
       <main className="main-content">
         <div className="page-heading"><div><div className="flex items-center gap-3"><h1>{project}</h1><span className="pill">Analyzed</span></div><p>Project overview <span className="mx-2">/</span> {view}</p></div><div className="heading-actions"><Button variant="outline" size="sm" onClick={() => setModal('import')}><Plus/>Import project</Button><Button size="sm" disabled={analyzing} onClick={analyze}><Sparkles/>{analyzing ? 'Analyzing...' : 'Re-analyze'}</Button></div></div>
         <div className="repo-bar"><span className="flex gap-1.5 items-center"><FolderGit2 size={13}/>hectorq/{project}</span><span className="branch"><GitBranch size={11}/>main<ChevronDown size={10}/></span><span className="font-mono text-[10px]">a7f3c2e</span><span className="ml-auto"><span className="status-dot"/>Last analyzed {updated ? 'just now' : '2 minutes ago'}</span></div>
@@ -88,7 +106,7 @@ function Index() {
       : modal === 'documentation' ? <><p>Explore a project through architecture, dependencies, function calls, database relationships, API interactions, cloud infrastructure, and CI/CD views.</p><p>Select a component to inspect its entry point and connections. Export a map as JSON to share your findings.</p></>
       : modal === 'notifications' ? <><p className="flex items-center gap-2"><CheckCheck className="text-primary" size={16}/>Analysis completed for {project}.</p><p>8 components mapped · 3 architecture insights available.</p><Button variant="outline" onClick={() => { setTab('Insights'); setModal(null); }}>View insights<ArrowRight/></Button></>
       : modal === 'upgrade' ? <><p>You’re exploring the free prototype. All visualization views are available, with three sample projects.</p><p>Paid plans and billing are not connected.</p></>
-      : modal === 'account' ? <><div className="flex items-center gap-3 mt-6"><div className="avatar">HQ</div><div><div>Hector Quiñones</div><div className="text-muted-foreground text-xs mt-1">Personal workspace · Free plan</div></div></div><p>This is a prototype profile. Account management is not connected.</p></>
+      : modal === 'account' ? <><div className="flex items-center gap-3 mt-6"><div className="avatar">{initials}</div><div><div>{userEmail}</div><div className="text-muted-foreground text-xs mt-1">Personal workspace · Free plan</div></div></div><p>Signed in with Cognito. Profile editing isn't available yet.</p><Button variant="outline" className="w-full" onClick={() => { void signOut().finally(() => navigate({ to: '/login' })); }}>Sign out<ArrowRight/></Button></>
       : <><p>Have an idea for making your codebase easier to understand?</p><textarea aria-label="Feedback" placeholder="Share your feedback..." className="w-full min-h-28 rounded-md border border-border bg-background p-3 outline-none"/><Button className="mt-4" onClick={() => { setModal(null); setToast('Thanks! Feedback noted in this preview session.'); }}>Submit feedback<ArrowRight/></Button></>}
     </section></div>}
     {toast && <div className="toast" role="status"><Check size={16} className="text-primary"/>{toast}</div>}
