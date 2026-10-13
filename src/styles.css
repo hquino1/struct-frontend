@@ -63,6 +63,9 @@
 .sidebar-scrim { display: none; }
 .topbar-start { display: flex; align-items: center; gap: 18px; min-width: 0; }
 .sidebar-toggle { color: var(--muted-foreground); width: 32px; height: 32px; flex-shrink: 0; }
+@media(max-width: 700px) {
+  .sidebar-open .sidebar-toggle { position: fixed; left: 244px; top: 12px; z-index: 40; background: var(--card); border: 1px solid var(--border); }
+}
 .sidebar-closed .sidebar-text { display: none; }
 .sidebar-closed .sidebar { padding: 22px 10px 12px; align-items: center; overflow-x: hidden; }
 .sidebar-closed .brand { padding: 0 0 27px; justify-content: center; }
