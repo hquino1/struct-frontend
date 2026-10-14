@@ -20,4 +20,18 @@ describe("App routing", () => {
 
     expect(router.matchRoutes("/login").at(-1)?.routeId).toBe("/login");
   });
+
+  it("matches the projects page for /projects", () => {
+    const router = createRouter({ routeTree, context: { queryClient: new QueryClient() } });
+
+    expect(router.matchRoutes("/projects").at(-1)?.routeId).toBe("/_app/projects/");
+  });
+
+  it("matches a project workspace for /projects/:projectId", () => {
+    const router = createRouter({ routeTree, context: { queryClient: new QueryClient() } });
+    const match = router.matchRoutes("/projects/abc-123").at(-1);
+
+    expect(match?.routeId).toBe("/_app/projects/$projectId");
+    expect(match?.params).toMatchObject({ projectId: "abc-123" });
+  });
 });
