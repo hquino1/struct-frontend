@@ -9,6 +9,9 @@ export interface Project {
   repoUrl: string;
   branch: string;
   createdAt: string;
+  analysisStatus: "NOT_STARTED" | Analysis["status"];
+  // The step the latest analysis is on (or stopped at); null before the first run.
+  analysisStep: AnalysisStep | null;
 }
 
 export interface CreateProjectInput {
@@ -53,4 +56,65 @@ export function listProjects() {
 
 export function createProject(input: CreateProjectInput) {
   return apiFetch<Project>("/projects", { method: "POST", body: JSON.stringify(input) });
+}
+
+export const analysisSteps = ["clone", "detect", "map", "trace", "insights"] as const;
+export type AnalysisStep = (typeof analysisSteps)[number];
+
+export interface Analysis {
+  analysisId: string;
+  projectId: string;
+  status: "QUEUED" | "RUNNING" | "COMPLETE" | "FAILED";
+  step: AnalysisStep;
+  startedAt: string;
+  finishedAt?: string;
+  commit?: string;
+  stats?: { files: number; languages: Record<string, number> };
+  error?: string;
+}
+
+export async function getAnalysis(projectId: string) {
+  const { analysis } = await apiFetch<{ analysis: Analysis | null }>(
+    `/projects/${encodeURIComponent(projectId)}/analysis`,
+  );
+  return analysis;
+}
+
+export function startAnalysis(projectId: string) {
+  return apiFetch<Analysis>(`/projects/${encodeURIComponent(projectId)}/analysis`, {
+    method: "POST",
+  });
+}
+
+export type ComponentType = "frontend" | "service" | "data" | "external";
+
+// The architecture map saved by the latest completed analysis.
+export interface ArchitectureGraph {
+  projectId: string;
+  analysisId: string;
+  components: {
+    id: string;
+    name: string;
+    type: ComponentType;
+    tech: string;
+    description: string;
+    // Directories or files holding the component's code; empty for data stores and externals.
+    paths: string[];
+    // The file to open first; empty when the component has no code in the repository.
+    entryPoint: string;
+    files: number;
+  }[];
+  connections: { from: string; to: string; label: string }[];
+  insights: {
+    title: string;
+    text: string;
+    kind: "Architecture" | "Attention" | "Best practice";
+    componentIds: string[];
+  }[];
+}
+
+export type GraphComponent = ArchitectureGraph["components"][number];
+
+export function getGraph(projectId: string) {
+  return apiFetch<ArchitectureGraph>(`/projects/${encodeURIComponent(projectId)}/graph`);
 }

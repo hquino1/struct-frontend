@@ -41,8 +41,8 @@ import { Button } from "@/components/ui/button";
 import { Modal } from "@/components/modal";
 import { ShellContext } from "@/hooks/use-shell";
 import { useTheme } from "@/hooks/use-theme";
-import { views } from "@/lib/architecture-data";
-import { useCreateProject, useProjects } from "@/lib/projects";
+import { views } from "@/lib/graph";
+import { useAnalysis, useCreateProject, useGraph, useProjects } from "@/lib/projects";
 
 // Pathless layout: every signed-in page renders inside this sidebar + top bar shell.
 export const Route = createFileRoute("/_app")({
@@ -81,6 +81,11 @@ function AppShell() {
   const search = useSearch({ strict: false });
   const location = useRouterState({ select: (s) => s.location });
   const active = projectId ? projects.find((p) => p.projectId === projectId) : undefined;
+  // Insights and the explore views only exist once the active project has been analyzed.
+  const { data: analysis } = useAnalysis(active?.projectId);
+  const analyzed = active && analysis?.status === "COMPLETE" ? active : undefined;
+  // Shares the workspace's cached graph, so this costs no extra request there.
+  const { data: graph } = useGraph(analyzed ? analysis : undefined);
   const activeView = search.view ?? views[0];
   const onProjectsPage = location.pathname === "/projects" || location.pathname === "/projects/";
 
@@ -159,7 +164,7 @@ function AppShell() {
               <span className="count sidebar-text">{projects.length}</span>
             </Link>
           </Button>
-          {active && (
+          {analyzed && (
             <Button
               asChild
               variant="ghost"
@@ -167,7 +172,7 @@ function AppShell() {
             >
               <Link
                 to="/projects/$projectId"
-                params={{ projectId: active.projectId }}
+                params={{ projectId: analyzed.projectId }}
                 search={{ ...(search.view && { view: search.view }), tab: "Insights" }}
                 title="Insights"
                 aria-label="Insights"
@@ -228,7 +233,7 @@ function AppShell() {
               </Button>
             ))
           )}
-          {active && (
+          {analyzed && (
             <>
               <div className="nav-label sidebar-text">Explore</div>
               <div className="visualization-nav">
@@ -243,7 +248,7 @@ function AppShell() {
                     >
                       <Link
                         to="/projects/$projectId"
-                        params={{ projectId: active.projectId }}
+                        params={{ projectId: analyzed.projectId }}
                         search={{ view: v }}
                         title={v}
                         aria-label={v}
@@ -378,17 +383,22 @@ function AppShell() {
         )}
         {modal === "notifications" && (
           <Modal title="Notifications" onClose={closeModal}>
-            {active ? (
+            {analyzed ? (
               <>
                 <p className="flex items-center gap-2">
                   <CheckCheck className="text-primary" size={16} />
-                  Analysis completed for {active.name}.
+                  Analysis completed for {analyzed.name}.
                 </p>
-                <p>8 components mapped · 3 architecture insights available.</p>
+                {graph && (
+                  <p>
+                    {graph.components.length} components mapped · {graph.insights.length}{" "}
+                    architecture insights available.
+                  </p>
+                )}
                 <Button variant="outline" asChild>
                   <Link
                     to="/projects/$projectId"
-                    params={{ projectId: active.projectId }}
+                    params={{ projectId: analyzed.projectId }}
                     search={{ ...(search.view && { view: search.view }), tab: "Insights" }}
                     onClick={closeModal}
                   >
@@ -480,9 +490,7 @@ function ImportModal({
       {
         onSuccess: (created) => {
           onClose();
-          onToast(
-            `Project ${created.name} created. Diagrams use sample data until code analysis is connected.`,
-          );
+          onToast(`Project ${created.name} created. Run an analysis to map its architecture.`);
           void navigate({ to: "/projects/$projectId", params: { projectId: created.projectId } });
         },
       },

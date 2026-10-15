@@ -1,45 +1,49 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useEffect, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { formatDistanceToNow } from "date-fns";
 import {
   ArrowDownToLine,
+  ArrowLeft,
   ArrowRight,
   Box,
   Check,
   ChevronDown,
   ChevronRight,
   Code2,
-  Database,
   ExternalLink,
   FileCode2,
   FolderGit2,
   GitBranch,
   GitFork,
-  Globe,
-  Maximize,
-  MoreHorizontal,
+  Loader2,
   Network,
-  Plus,
   Settings2,
   ShieldCheck,
   Sparkles,
   TriangleAlert,
-  Zap,
-  ZoomIn,
-  ZoomOut,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Modal } from "@/components/modal";
+import { GraphCanvas } from "@/components/graph-canvas";
 import { useShell } from "@/hooks/use-shell";
+import { generatedViews, layoutGraph, nodeIcons, typeLabels, views, type View } from "@/lib/graph";
 import {
-  nodesForView,
-  edges,
-  views,
-  insights,
-  type View,
-  type GraphNode,
-} from "@/lib/architecture-data";
-import type { Project } from "@/lib/api";
-import { repoPath, setLastProjectId, useProjects } from "@/lib/projects";
+  analysisSteps as stepIds,
+  type Analysis,
+  type ArchitectureGraph,
+  type ComponentType,
+  type GraphComponent,
+  type Project,
+} from "@/lib/api";
+import {
+  isAnalysisActive,
+  repoPath,
+  setLastProjectId,
+  useAnalysis,
+  useGraph,
+  useProjects,
+  useStartAnalysis,
+} from "@/lib/projects";
 
 const tabs = ["Graph", "Files", "Insights"] as const;
 type Tab = (typeof tabs)[number];
@@ -70,8 +74,8 @@ export const Route = createFileRoute("/_app/projects/$projectId")({
   }),
   component: ProjectPage,
 });
-const nodeIcons = { frontend: Globe, service: Box, data: Database, external: Zap };
-const positions: [number, number][] = [
+// Outline of an empty map behind the pre-analysis card.
+const ghostPositions: [number, number][] = [
   [40, 95],
   [40, 287],
   [312, 95],
@@ -86,11 +90,21 @@ function ProjectPage() {
   const { projectId } = Route.useParams();
   const { data: projects, status, refetch } = useProjects();
   const project = projects?.find((p) => p.projectId === projectId);
+  const { data: analysis, status: analysisStatus } = useAnalysis(project?.projectId);
+  const { showToast } = useShell();
   useEffect(() => {
     if (project) setLastProjectId(project.projectId);
   }, [project]);
+  // Announce a run finishing while the page is open, not one that finished earlier.
+  const previousAnalysis = useRef(analysis);
+  useEffect(() => {
+    const previous = previousAnalysis.current;
+    previousAnalysis.current = analysis;
+    if (!isAnalysisActive(previous) || previous?.analysisId !== analysis?.analysisId) return;
+    if (analysis?.status === "COMPLETE") showToast(`Analysis complete for ${project?.name}.`);
+  }, [analysis, project, showToast]);
 
-  if (status === "pending")
+  if (status === "pending" || (project && analysisStatus === "pending"))
     return (
       <main className="main-content">
         <p className="projects-empty">Loading project...</p>
@@ -123,45 +137,338 @@ function ProjectPage() {
         </div>
       </main>
     );
+  if (analysisStatus === "error")
+    return (
+      <main className="main-content">
+        <div className="projects-empty">
+          <p>Couldn't load this project's analysis.</p>
+        </div>
+      </main>
+    );
   // Keyed so switching projects starts from a fresh selection and zoom.
-  return <Workspace key={project.projectId} project={project} />;
+  return analysis?.status === "COMPLETE" ? (
+    <Workspace key={project.projectId} project={project} analysis={analysis} />
+  ) : (
+    <PreAnalysis key={project.projectId} project={project} analysis={analysis ?? null} />
+  );
 }
 
-function Workspace({ project }: { project: Project }) {
+const analysisSteps = [
+  { label: "Clone repository", detail: "Fetching the selected branch" },
+  { label: "Detect stack", detail: "Languages, frameworks, and package managers" },
+  { label: "Map components", detail: "Services, apps, data stores, and integrations" },
+  { label: "Trace dependencies", detail: "Imports, API calls, and data access" },
+  { label: "Generate insights", detail: "Structure, coupling, and risks" },
+];
+
+const analysisOutputs = [
+  {
+    icon: Network,
+    title: "Interactive architecture map",
+    text: "See every service, app, and data store, and how requests move between them.",
+  },
+  {
+    icon: GitFork,
+    title: "Seven ways to explore",
+    text: "Switch between dependencies, function calls, database schema, APIs, cloud, and CI/CD.",
+  },
+  {
+    icon: Sparkles,
+    title: "Architecture insights",
+    text: "Spot circular dependencies, central bottlenecks, and boundaries worth keeping.",
+  },
+];
+
+const dateFormat = new Intl.DateTimeFormat(undefined, { dateStyle: "medium" });
+
+// Shown until the project has a completed analysis: idle, in progress, or failed.
+function PreAnalysis({ project, analysis }: { project: Project; analysis: Analysis | null }) {
+  const start = useStartAnalysis(project.projectId);
+  const running = start.isPending || isAnalysisActive(analysis);
+  const failed = !running && analysis?.status === "FAILED";
+  // Index of the step that is running (or that failed); null before any run.
+  const step = running || failed ? stepIds.indexOf(analysis?.step ?? "clone") : null;
+  const startError = start.error instanceof Error ? start.error.message : "";
+
+  return (
+    <main className="main-content">
+      <div className="page-heading">
+        <div>
+          <div className="flex items-center gap-3">
+            <h1>{project.name}</h1>
+            <span className={`pill ${running ? "" : failed ? "pill-failed" : "pill-muted"}`}>
+              {running ? "Analyzing" : failed ? "Analysis failed" : "Not analyzed"}
+            </span>
+          </div>
+          <p>Imported {dateFormat.format(new Date(project.createdAt))}</p>
+        </div>
+      </div>
+      <div className="repo-bar">
+        <a
+          className="flex gap-1.5 items-center hover:text-foreground"
+          href={project.repoUrl}
+          target="_blank"
+          rel="noreferrer"
+        >
+          <FolderGit2 size={13} />
+          {repoPath(project)}
+        </a>
+        <span className="branch">
+          <GitBranch size={11} />
+          {project.branch}
+        </span>
+        <span className="ml-auto">
+          <span className={`status-dot ${running ? "animate-pulse" : "idle"}`} />
+          {running
+            ? "Analysis in progress"
+            : failed
+              ? "Last analysis failed"
+              : "Waiting for first analysis"}
+        </span>
+      </div>
+      <div className="stats-row">
+        {["Files analyzed", "Components", "Dependencies", "Architecture health"].map((label) => (
+          <div className="stat-card" key={label}>
+            <div className="stat-label">{label}</div>
+            <div className="stat-value text-muted-foreground/50">—</div>
+            <div className="stat-foot">
+              {running ? "Calculating..." : "Available after analysis"}
+            </div>
+          </div>
+        ))}
+      </div>
+      <section className="graph-section" aria-label="Analysis">
+        <div className="pre-analysis">
+          <div className="ghost-diagram" aria-hidden="true">
+            {ghostPositions.map(([x, y], i) => (
+              <span key={i} className="ghost-node" style={{ left: x, top: y }} />
+            ))}
+          </div>
+          <div className="analysis-card">
+            <span className={`node-icon ${failed ? "failed" : "service"}`}>
+              {running ? (
+                <Loader2 size={17} className="animate-spin" />
+              ) : failed ? (
+                <TriangleAlert size={17} />
+              ) : (
+                <Network size={17} />
+              )}
+            </span>
+            <h2>
+              {running
+                ? `Analyzing ${project.name}`
+                : failed
+                  ? "The analysis didn't finish"
+                  : "Ready to map this repository"}
+            </h2>
+            <p>
+              {running
+                ? "Struct is reading the code on this branch. This page updates when the map is ready."
+                : failed
+                  ? analysis?.error
+                  : `Struct will read ${repoPath(project)} on ${project.branch} and map its components, connections, and risks.`}
+            </p>
+            <ol className="analysis-steps">
+              {analysisSteps.map((s, i) => {
+                const state =
+                  step === null || i > step
+                    ? "todo"
+                    : i < step
+                      ? "done"
+                      : failed
+                        ? "failed"
+                        : "active";
+                return (
+                  <li key={s.label} className={state}>
+                    <span className="step-mark">
+                      {state === "done" ? (
+                        <Check size={11} />
+                      ) : state === "failed" ? (
+                        <TriangleAlert size={11} />
+                      ) : state === "active" ? (
+                        <Loader2 size={11} className="animate-spin" />
+                      ) : (
+                        i + 1
+                      )}
+                    </span>
+                    <div>
+                      <div className="step-label">{s.label}</div>
+                      <div className="step-detail">{s.detail}</div>
+                    </div>
+                  </li>
+                );
+              })}
+            </ol>
+            {startError && (
+              <p className="analysis-error" role="alert">
+                {startError}
+              </p>
+            )}
+            {running && step !== null ? (
+              <div
+                className="analysis-progress"
+                role="progressbar"
+                aria-label="Analysis progress"
+                aria-valuemin={0}
+                aria-valuemax={analysisSteps.length}
+                aria-valuenow={step}
+              >
+                <span style={{ width: `${((step + 0.5) / analysisSteps.length) * 100}%` }} />
+              </div>
+            ) : (
+              <Button className="w-full" onClick={() => start.mutate()}>
+                <Sparkles />
+                {failed ? "Try again" : "Analyze repository"}
+              </Button>
+            )}
+          </div>
+        </div>
+      </section>
+      <div className="insights-heading">
+        <h2>
+          <Sparkles size={14} className="text-primary" />
+          What you'll get
+        </h2>
+      </div>
+      <div className="insights-grid">
+        {analysisOutputs.map((o) => (
+          <div className="insight" key={o.title}>
+            <o.icon size={16} className="text-primary" />
+            <h3>{o.title}</h3>
+            <p>{o.text}</p>
+          </div>
+        ))}
+      </div>
+      <footer className="footer">
+        <span className="flex items-center gap-1.5">
+          <ShieldCheck size={11} />
+          Your code stays yours. Always.
+        </span>
+        <span>Built for human understanding.</span>
+      </footer>
+    </main>
+  );
+}
+
+const filters = ["All components", "frontend", "service", "data", "external"] as const;
+type Filter = (typeof filters)[number];
+
+const plural = (count: number, one: string, many = `${one}s`) =>
+  `${count} ${count === 1 ? one : many}`;
+const typeCounts: Record<ComponentType, [string, string]> = {
+  frontend: ["app", "apps"],
+  service: ["service", "services"],
+  data: ["data store", "data stores"],
+  external: ["integration", "integrations"],
+};
+
+// Links into the analyzed commit, so paths match what the map was built from.
+const githubUrl = (project: Project, analysis: Analysis, path: string, kind: "blob" | "tree") =>
+  `${project.repoUrl}/${kind}/${analysis.commit ?? encodeURIComponent(project.branch)}/${path
+    .split("/")
+    .map(encodeURIComponent)
+    .join("/")}`;
+
+function Workspace({ project, analysis }: { project: Project; analysis: Analysis }) {
   const { view = "System architecture", tab = "Graph" } = Route.useSearch();
   const navigate = useNavigate({ from: Route.fullPath });
   const setView = (v: View) => void navigate({ search: { view: v } });
   const setTab = (t: Tab) => void navigate({ search: (prev) => ({ ...prev, tab: t }) });
-  const { query, showToast, openImport } = useShell();
-  const [selected, setSelected] = useState("api");
-  const [zoom, setZoom] = useState(100);
-  const [modal, setModal] = useState<"filter" | "code" | "insight" | null>(null);
-  const [filter, setFilter] = useState("All components");
-  const [analyzing, setAnalyzing] = useState(false);
-  const [updated, setUpdated] = useState(false);
-  const nodes = nodesForView(view);
-  const current = nodes.find((n) => n.id === selected) ?? nodes[2];
-  if (!current) return null;
+  const { query, showToast } = useShell();
+  // Starting a run replaces this page with the progress view until it completes.
+  const start = useStartAnalysis(project.projectId);
+  const { data: graph, status: graphStatus, error: graphError, refetch } = useGraph(analysis);
+  const layout = useMemo(() => (graph ? layoutGraph(graph) : undefined), [graph]);
+  const byId = useMemo(() => new Map(graph?.components.map((c) => [c.id, c])), [graph]);
+  // Until the user picks one, show the most connected component.
+  const hub = useMemo(() => {
+    if (!graph) return undefined;
+    const degree = (id: string) =>
+      graph.connections.filter((c) => c.from === id || c.to === id).length;
+    return [...graph.components].sort((a, b) => degree(b.id) - degree(a.id))[0];
+  }, [graph]);
+  const [selectedId, setSelectedId] = useState<string>();
+  const current = (selectedId ? byId.get(selectedId) : undefined) ?? hub;
+  const [modal, setModal] = useState<"filter" | null>(null);
+  const [filter, setFilter] = useState<Filter>("All components");
   const closeModal = () => setModal(null);
-  const analyze = () => {
-    setAnalyzing(true);
-    setTimeout(() => {
-      setAnalyzing(false);
-      setUpdated(true);
-      showToast("Sample analysis refreshed. 8 components and 9 connections mapped.");
-    }, 1500);
+  const inspect = (id: string) => {
+    setSelectedId(id);
+    setTab("Graph");
   };
+  const analyze = () =>
+    start.mutate(undefined, {
+      onError: (err) => showToast(err.message),
+    });
+  const languages = Object.entries(analysis.stats?.languages ?? {})
+    .sort(([, a], [, b]) => b - a)
+    .slice(0, 3)
+    .map(([language]) => language);
+  const isDimmed = (id: string) => {
+    const c = byId.get(id);
+    if (!c) return false;
+    return (
+      (!!query && !`${c.name} ${c.tech}`.toLowerCase().includes(query.toLowerCase())) ||
+      (filter !== "All components" && c.type !== filter)
+    );
+  };
+
+  const components = graph?.components ?? [];
+  const connections = graph?.connections ?? [];
+  const insights = graph?.insights ?? [];
+  const externalLinks = connections.filter((c) => byId.get(c.to)?.type === "external").length;
+  const attention = insights.filter((i) => i.kind === "Attention").length;
+  const pending = graphStatus === "pending" ? "…" : "—";
+  const stats = [
+    {
+      label: "Files analyzed",
+      value: String(analysis.stats?.files ?? "—"),
+      foot: languages.join(" · ") || "No source files found",
+      icon: FileCode2,
+    },
+    {
+      label: "Components",
+      value: graph ? String(components.length) : pending,
+      foot: graph
+        ? (Object.keys(typeCounts) as ComponentType[])
+            .map((type) => [type, components.filter((c) => c.type === type).length] as const)
+            .filter(([, count]) => count > 0)
+            .map(([type, count]) => plural(count, ...typeCounts[type]))
+            .join(" · ")
+        : "Loading map...",
+      icon: Box,
+    },
+    {
+      label: "Connections",
+      value: graph ? String(connections.length) : pending,
+      foot: graph
+        ? `${connections.length - externalLinks} internal · ${externalLinks} external`
+        : "Loading map...",
+      icon: GitFork,
+    },
+    {
+      label: "Insights",
+      value: graph ? String(insights.length) : pending,
+      foot: graph
+        ? attention
+          ? `${attention} ${attention === 1 ? "needs" : "need"} attention`
+          : "Nothing flagged"
+        : "Loading map...",
+      icon: Sparkles,
+    },
+  ];
+
   const exportGraph = () => {
+    if (!graph) return;
+    const { components, connections, insights } = graph;
     const content = JSON.stringify(
       {
         project: project.name,
-        view,
-        components: nodes,
-        connections: edges.map(([a, b, label]) => ({
-          from: nodes[a]?.id,
-          to: nodes[b]?.id,
-          label,
-        })),
+        repository: project.repoUrl,
+        commit: analysis.commit,
+        components,
+        connections,
+        insights,
       },
       null,
       2,
@@ -174,6 +481,34 @@ function Workspace({ project }: { project: Project }) {
     URL.revokeObjectURL(url);
     showToast("Architecture exported as JSON");
   };
+
+  // Shown in place of the graph, files, or insights while the map can't be drawn.
+  const blocked =
+    graphStatus === "pending" ? (
+      <CanvasMessage icon={<Loader2 size={17} className="animate-spin" />}>
+        <p>Loading the architecture map...</p>
+      </CanvasMessage>
+    ) : graphStatus === "error" ? (
+      <CanvasMessage icon={<TriangleAlert size={17} />} failed>
+        <h2>Couldn't load the architecture map</h2>
+        <p>{graphError.message}</p>
+        <div className="flex gap-2">
+          <Button variant="outline" size="sm" onClick={() => void refetch()}>
+            Try again
+          </Button>
+          <Button size="sm" disabled={start.isPending} onClick={analyze}>
+            <Sparkles />
+            Re-analyze
+          </Button>
+        </div>
+      </CanvasMessage>
+    ) : !components.length ? (
+      <CanvasMessage icon={<Network size={17} />}>
+        <h2>No components found</h2>
+        <p>The analysis didn't find any components in this repository.</p>
+      </CanvasMessage>
+    ) : null;
+
   return (
     <main className="main-content">
       <div className="page-heading">
@@ -187,13 +522,9 @@ function Workspace({ project }: { project: Project }) {
           </p>
         </div>
         <div className="heading-actions">
-          <Button variant="outline" size="sm" onClick={openImport}>
-            <Plus />
-            Import project
-          </Button>
-          <Button size="sm" disabled={analyzing} onClick={analyze}>
+          <Button size="sm" disabled={start.isPending} onClick={analyze}>
             <Sparkles />
-            {analyzing ? "Analyzing..." : "Re-analyze"}
+            {start.isPending ? "Starting..." : "Re-analyze"}
           </Button>
         </div>
       </div>
@@ -212,37 +543,28 @@ function Workspace({ project }: { project: Project }) {
           {project.branch}
           <ChevronDown size={10} />
         </span>
-        <span className="font-mono text-[10px]">a7f3c2e</span>
+        {analysis.commit && (
+          <span className="font-mono text-[10px]" title={analysis.commit}>
+            {analysis.commit.slice(0, 7)}
+          </span>
+        )}
         <span className="ml-auto">
           <span className="status-dot" />
-          Last analyzed {updated ? "just now" : "2 minutes ago"}
+          Last analyzed{" "}
+          {formatDistanceToNow(new Date(analysis.finishedAt ?? analysis.startedAt), {
+            addSuffix: true,
+          })}
         </span>
       </div>
       <div className="stats-row">
-        {[
-          { label: "Files analyzed", value: "248", foot: "Across 12 directories", icon: FileCode2 },
-          {
-            label: "Components",
-            value: "8",
-            foot: "3 services · 2 apps · 3 integrations",
-            icon: Box,
-          },
-          { label: "Dependencies", value: "32", foot: "9 internal · 23 external", icon: GitFork },
-          { label: "Architecture health", value: "92", foot: "Well structured", icon: ShieldCheck },
-        ].map((s, i) => (
+        {stats.map((s) => (
           <div className="stat-card" key={s.label}>
             <div className="stat-label">
               {s.label}
               <s.icon size={14} />
             </div>
-            <div className="stat-value">
-              {s.value}
-              {i === 3 && <span className="text-sm text-muted-foreground font-normal"> / 100</span>}
-            </div>
-            <div className={`stat-foot ${i === 3 ? "text-primary" : ""}`}>
-              {i === 3 && <span className="status-dot" />}
-              {s.foot}
-            </div>
+            <div className="stat-value">{s.value}</div>
+            <div className="stat-foot">{s.foot}</div>
           </div>
         ))}
       </div>
@@ -264,7 +586,7 @@ function Workspace({ project }: { project: Project }) {
                   <Sparkles size={13} />
                 )}{" "}
                 {t}
-                {t === "Insights" && <span className="key">3</span>}
+                {t === "Insights" && graph && <span className="key">{insights.length}</span>}
               </Button>
             ))}
           </div>
@@ -273,225 +595,140 @@ function Workspace({ project }: { project: Project }) {
               variant="ghost"
               size="icon"
               title="Filter components"
-              className="h-7 w-7 text-muted-foreground"
+              className={`h-7 w-7 ${filter === "All components" ? "text-muted-foreground" : "text-primary"}`}
               onClick={() => setModal("filter")}
             >
               <Settings2 />
             </Button>
-            <Button variant="outline" size="sm" className="h-7 text-[10px]" onClick={exportGraph}>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 text-[10px]"
+              disabled={!graph}
+              onClick={exportGraph}
+            >
               <ArrowDownToLine size={12} />
               Export
             </Button>
           </div>
         </div>
-        {tab === "Graph" ? (
-          <div className="graph-body">
-            <div className="canvas">
-              <div className="canvas-caption">
-                <Network size={12} />
-                {view}
-                <span className="text-muted-foreground/50">/</span>8 nodes · 9 connections
-              </div>
-              <div className="diagram" style={{ "--zoom": zoom / 100 } as CSSProperties}>
-                <span className="layer-label layer-frontend">
-                  {view === "Database schema" ? "Entities" : "Client layer"}
-                </span>
-                <span className="layer-label layer-service">
-                  {view === "Database schema" ? "Relationships" : "Service layer"}
-                </span>
-                <span className="layer-label layer-data">
-                  {view === "Database schema" ? "Records" : "Data & integrations"}
-                </span>
-                <svg className="edges" viewBox="0 0 800 500">
-                  <defs>
-                    <marker
-                      id="arrow"
-                      markerWidth="6"
-                      markerHeight="6"
-                      refX="5"
-                      refY="3"
-                      orient="auto"
-                    >
-                      <path d="M0,0 L6,3 L0,6 Z" />
-                    </marker>
-                  </defs>
-                  {edges.map(([a, b, label], i) => {
-                    const start = positions[a];
-                    const end = positions[b];
-                    if (!start || !end) return null;
-                    const [ax, ay] = start;
-                    const [bx, by] = end;
-                    const vertical = ax === bx;
-                    const sx = vertical ? ax + 88 : ax + 176;
-                    const sy = vertical ? ay + 91 : ay + 45;
-                    const ex = vertical ? bx + 88 : bx;
-                    const ey = vertical ? by : by + 45;
-                    return (
-                      <g key={i}>
-                        <path
-                          className={
-                            nodes[a]?.id === selected || nodes[b]?.id === selected
-                              ? "highlight"
-                              : ""
-                          }
-                          d={
-                            vertical
-                              ? `M${sx},${sy} L${ex},${ey}`
-                              : `M${sx},${sy} C${sx + 55},${sy} ${ex - 55},${ey} ${ex},${ey}`
-                          }
-                          markerEnd="url(#arrow)"
-                        />
-                        <text
-                          x={vertical ? sx + 8 : (sx + ex) / 2 - 12}
-                          y={vertical ? (sy + ey) / 2 : (sy + ey) / 2 - 8}
-                        >
-                          {view === "Database schema"
-                            ? "1 : N"
-                            : view === "Function calls"
-                              ? "calls"
-                              : label}
-                        </text>
-                      </g>
-                    );
-                  })}
-                </svg>
-                {nodes.map((n, i) => {
-                  const Icon = nodeIcons[n.type];
-                  const dim =
-                    (query && !`${n.name} ${n.tech}`.toLowerCase().includes(query.toLowerCase())) ||
-                    (filter !== "All components" && n.type !== filter);
-                  return (
-                    <Button
-                      key={n.id}
-                      variant="ghost"
-                      className={`graph-node node-${i} ${n.id === selected ? "chosen" : ""} ${dim ? "dimmed" : ""}`}
-                      aria-label={`Select ${n.name}`}
-                      onClick={() => setSelected(n.id)}
-                    >
-                      <div className="node-top">
-                        <span className={`node-icon ${n.type}`}>
-                          <Icon size={15} />
-                        </span>
-                        <div>
-                          <div className="node-title">{n.name}</div>
-                          <div className="node-technology">{n.tech}</div>
-                        </div>
-                      </div>
-                      <div className="node-bottom">
-                        <span>
-                          <FileCode2 size={9} className="inline mr-1" />
-                          {n.files} files
-                        </span>
-                        <span>
-                          {n.type === "external"
-                            ? "External"
-                            : n.type === "data"
-                              ? "Data store"
-                              : n.type === "service"
-                                ? "Service"
-                                : "Application"}
-                        </span>
-                      </div>
-                    </Button>
-                  );
-                })}
-              </div>
-              <div className="canvas-controls">
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  title="Zoom out"
-                  onClick={() => setZoom((z) => Math.max(50, z - 10))}
-                >
-                  <ZoomOut />
+        {blocked ??
+          (tab === "Graph" ? (
+            !generatedViews.includes(view) ? (
+              <CanvasMessage icon={<Network size={17} />}>
+                <h2>{view} isn't mapped yet</h2>
+                <p>
+                  Struct currently maps each repository's system architecture: its components and
+                  how they connect. This view will be built from the same analysis.
+                </p>
+                <Button variant="outline" size="sm" onClick={() => setView("System architecture")}>
+                  <ArrowLeft />
+                  System architecture
                 </Button>
-                <span>{zoom}%</span>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  title="Zoom in"
-                  onClick={() => setZoom((z) => Math.min(150, z + 10))}
-                >
-                  <ZoomIn />
-                </Button>
-                <span className="border-l border-border h-4 p-0" />
-                <Button variant="ghost" size="icon" title="Fit graph" onClick={() => setZoom(100)}>
-                  <Maximize />
-                </Button>
+              </CanvasMessage>
+            ) : (
+              graph &&
+              layout &&
+              current && (
+                <div className="graph-body">
+                  <GraphCanvas
+                    layout={layout}
+                    selected={current.id}
+                    onSelect={setSelectedId}
+                    isDimmed={isDimmed}
+                    caption={
+                      <>
+                        <Network size={12} />
+                        {view}
+                        <span className="text-muted-foreground/50">/</span>
+                        {plural(components.length, "component")} ·{" "}
+                        {plural(connections.length, "connection")}
+                      </>
+                    }
+                  />
+                  <DetailPanel
+                    node={current}
+                    graph={graph}
+                    byId={byId}
+                    sourceUrl={(path, kind) => githubUrl(project, analysis, path, kind)}
+                    onSelect={setSelectedId}
+                  />
+                </div>
+              )
+            )
+          ) : tab === "Files" ? (
+            <div className="insights-expanded">
+              <div className="flex items-center justify-between mb-6">
+                <h2 className="text-sm font-semibold">Project files</h2>
+                <span className="text-muted-foreground text-xs">
+                  {plural(components.filter((c) => c.entryPoint).length, "component entry point")}
+                </span>
               </div>
-              <div className="minimap" aria-hidden="true">
-                <svg viewBox="0 0 100 65">
-                  {positions.map(([x, y], i) => (
-                    <rect key={i} x={x / 8} y={y / 8} width="21" height="9" rx="1" />
-                  ))}
-                  <rect className="focus" x="1" y="1" width="96" height="62" rx="2" />
-                </svg>
-              </div>
+              {components
+                .filter((c) => c.entryPoint)
+                .filter((c) =>
+                  `${c.name} ${c.entryPoint} ${c.paths.join(" ")}`
+                    .toLowerCase()
+                    .includes(query.toLowerCase()),
+                )
+                .map((c) => (
+                  <Button
+                    key={c.id}
+                    variant="ghost"
+                    className="flex w-full justify-start h-14 border-b border-border rounded-none"
+                    onClick={() => inspect(c.id)}
+                  >
+                    <FileCode2 className="text-primary" />
+                    <span className="flex flex-col items-start min-w-0">
+                      <span className="font-mono text-xs truncate max-w-full">{c.entryPoint}</span>
+                      <span className="text-muted-foreground text-[10px]">{c.name}</span>
+                    </span>
+                    <span className="ml-auto text-muted-foreground text-[10px]">
+                      {plural(c.files, "file")}
+                    </span>
+                    <ChevronRight />
+                  </Button>
+                ))}
             </div>
-            <DetailPanel
-              node={current}
-              nodes={nodes}
-              onCode={() => setModal("code")}
-              onSelect={setSelected}
-            />
-          </div>
-        ) : tab === "Files" ? (
-          <div className="insights-expanded">
-            <div className="flex items-center justify-between mb-6">
-              <h2 className="text-sm font-semibold">Project files</h2>
-              <span className="text-muted-foreground text-xs">8 component entry points</span>
+          ) : (
+            <div className="insights-expanded">
+              <h2 className="text-sm font-semibold mb-5">Architecture insights</h2>
+              <Insights insights={insights} byId={byId} onInspect={inspect} />
             </div>
-            {nodes
-              .filter((n) => `${n.name} ${n.path}`.toLowerCase().includes(query.toLowerCase()))
-              .map((n) => (
-                <Button
-                  key={n.id}
-                  variant="ghost"
-                  className="flex w-full justify-start h-14 border-b border-border rounded-none"
-                  onClick={() => {
-                    setSelected(n.id);
-                    setModal("code");
-                  }}
-                >
-                  <FileCode2 className="text-primary" />
-                  <span className="font-mono text-xs">{n.path}</span>
-                  <span className="ml-auto text-muted-foreground text-[10px]">{n.files} files</span>
-                  <ChevronRight />
-                </Button>
-              ))}
-          </div>
-        ) : (
-          <div className="insights-expanded">
-            <h2 className="text-sm font-semibold mb-5">Architecture insights</h2>
-            <Insights onOpen={() => setModal("insight")} />
-          </div>
-        )}
+          ))}
         <div className="legend">
-          {["Frontend", "Service", "Data store", "External"].map((l, i) => (
-            <span className="legend-item" key={l}>
-              <span className={`legend-dot ${["", "service", "data", "external"][i]}`} />
-              {l}
+          {(["frontend", "service", "data", "external"] as const).map((type) => (
+            <span className="legend-item" key={type}>
+              <span className={`legend-dot ${type === "frontend" ? "" : type}`} />
+              {type === "frontend" ? "Frontend" : typeLabels[type]}
             </span>
           ))}
-          <span className="ml-auto hidden sm:block font-mono">Sample project</span>
+          <span className="ml-auto hidden sm:block font-mono">
+            Drag to pan · Ctrl + scroll to zoom
+          </span>
         </div>
       </section>
-      <div className="insights-heading">
-        <h2>
-          <Sparkles size={14} className="text-primary" />
-          Architecture insights<span className="pill">3 insights</span>
-        </h2>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="text-[10px] text-muted-foreground"
-          onClick={() => setTab("Insights")}
-        >
-          View all
-          <ArrowRight size={12} />
-        </Button>
-      </div>
-      <Insights onOpen={() => setModal("insight")} />
+      {insights.length > 0 && (
+        <>
+          <div className="insights-heading">
+            <h2>
+              <Sparkles size={14} className="text-primary" />
+              Architecture insights
+              <span className="pill">{plural(insights.length, "insight")}</span>
+            </h2>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-[10px] text-muted-foreground"
+              onClick={() => setTab("Insights")}
+            >
+              View all
+              <ArrowRight size={12} />
+            </Button>
+          </div>
+          <Insights insights={insights.slice(0, 3)} byId={byId} onInspect={inspect} />
+        </>
+      )}
       <footer className="footer">
         <span className="flex items-center gap-1.5">
           <ShieldCheck size={11} />
@@ -502,7 +739,7 @@ function Workspace({ project }: { project: Project }) {
       {modal === "filter" && (
         <Modal title="Component filters" onClose={closeModal}>
           <div className="grid gap-2 mt-5">
-            {["All components", "frontend", "service", "data", "external"].map((f) => (
+            {filters.map((f) => (
               <Button
                 key={f}
                 variant={filter === f ? "secondary" : "ghost"}
@@ -519,149 +756,186 @@ function Workspace({ project }: { project: Project }) {
           </div>
         </Modal>
       )}
-      {modal === "code" && (
-        <Modal title={current.name} onClose={closeModal}>
-          <p className="font-mono">{current.path}</p>
-          <pre className="code-block">{`// ${current.name} — sample entry point\nimport { router } from './routes';\nimport { authenticate } from './middleware';\n\napp.use(authenticate);\napp.use('/api/v1', router);\n\nexport default app;`}</pre>
-          <p>Source preview from the sample commerce project.</p>
-        </Modal>
-      )}
-      {modal === "insight" && (
-        <Modal title="Architecture insights" onClose={closeModal}>
-          <p>
-            The API Gateway is a central coordination point. Its authentication dependency can be
-            simplified.
-          </p>
-          <div className="code-block">
-            API Gateway → Auth Service
-            <br />
-            Auth Service → API Gateway
-          </div>
-          <p>
-            Extract token validation and shared types into an independent package. Both services can
-            consume it without depending on each other.
-          </p>
-          <Button
-            onClick={() => {
-              setSelected("auth");
-              setTab("Graph");
-              closeModal();
-            }}
-          >
-            Inspect Auth Service
-            <ArrowRight />
-          </Button>
-        </Modal>
-      )}
     </main>
   );
 }
+
+function CanvasMessage({
+  icon,
+  failed = false,
+  children,
+}: {
+  icon: ReactNode;
+  failed?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <div className="canvas-empty">
+      <div>
+        <span className={`node-icon ${failed ? "failed" : "service"}`}>{icon}</span>
+        {children}
+      </div>
+    </div>
+  );
+}
+
 function DetailPanel({
   node,
-  nodes,
-  onCode,
+  graph,
+  byId,
+  sourceUrl,
   onSelect,
 }: {
-  node: GraphNode;
-  nodes: GraphNode[];
-  onCode: () => void;
+  node: GraphComponent;
+  graph: ArchitectureGraph;
+  byId: Map<string, GraphComponent>;
+  sourceUrl: (path: string, kind: "blob" | "tree") => string;
   onSelect: (id: string) => void;
 }) {
   const Icon = nodeIcons[node.type];
-  const index = nodes.findIndex((n) => n.id === node.id);
-  const related = edges
-    .filter(([a, b]) => a === index || b === index)
-    .map(([a, b]) => nodes[a === index ? b : a])
-    .filter((n): n is GraphNode => n !== undefined);
+  const related = graph.connections.flatMap((c) => {
+    const outgoing = c.from === node.id;
+    if (!outgoing && c.to !== node.id) return [];
+    const other = byId.get(outgoing ? c.to : c.from);
+    return other ? [{ other, outgoing, label: c.label }] : [];
+  });
   return (
     <aside className="detail-panel">
-      <div className="detail-label">
-        Component details
-        <MoreHorizontal size={14} />
-      </div>
+      <div className="detail-label">Component details</div>
       <span className={`node-icon ${node.type}`}>
         <Icon size={17} />
       </span>
       <h2>{node.name}</h2>
-      <span className="pill capitalize">
-        {node.type === "service" ? "Backend service" : node.type}
+      <span className="pill">
+        {node.type === "service" ? "Backend service" : typeLabels[node.type]}
       </span>
       <p>{node.description}</p>
       <div className="detail-divider" />
       <div className="detail-kv">
         <span>Technology</span>
-        <span>{node.tech.split(" · ")[0]}</span>
+        <span>{node.tech}</span>
       </div>
-      <div className="detail-kv">
-        <span>Language</span>
-        <span>TypeScript</span>
-      </div>
-      <div className="detail-kv">
-        <span>Files</span>
-        <span>{node.files}</span>
-      </div>
+      {node.paths.length > 0 && (
+        <div className="detail-kv">
+          <span>Files</span>
+          <span>{node.files}</span>
+        </div>
+      )}
       <div className="detail-kv">
         <span>Connections</span>
         <span>{related.length}</span>
       </div>
       <div className="detail-divider" />
-      <div className="text-[10px] font-medium">Entry point</div>
-      <div className="file-path">
-        <FileCode2 size={12} />
-        <span className="truncate" title={node.path}>
-          {node.path}
-        </span>
-      </div>
-      <Button variant="outline" className="w-full h-7 text-[10px]" onClick={onCode}>
-        <Code2 size={12} />
-        View source
-        <ExternalLink size={11} className="ml-auto" />
-      </Button>
+      {node.entryPoint ? (
+        <>
+          <div className="text-[10px] font-medium">Entry point</div>
+          <div className="file-path">
+            <FileCode2 size={12} className="shrink-0" />
+            <span className="truncate" title={node.entryPoint}>
+              {node.entryPoint}
+            </span>
+          </div>
+          <Button variant="outline" className="w-full h-7 text-[10px]" asChild>
+            <a href={sourceUrl(node.entryPoint, "blob")} target="_blank" rel="noreferrer">
+              <Code2 size={12} />
+              View source
+              <ExternalLink size={11} className="ml-auto" />
+            </a>
+          </Button>
+          {node.paths.length > 0 && (
+            <>
+              <div className="text-[10px] font-medium mt-4">Code in</div>
+              {node.paths.slice(0, 5).map((path) => (
+                <a
+                  key={path}
+                  className="file-path hover:text-foreground my-2"
+                  href={sourceUrl(path, "tree")}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  <FolderGit2 size={12} className="shrink-0" />
+                  <span className="truncate" title={path}>
+                    {path}
+                  </span>
+                </a>
+              ))}
+            </>
+          )}
+        </>
+      ) : (
+        <p>
+          {node.type === "external"
+            ? "A third-party service. Its code lives outside this repository."
+            : "No code for this component in the repository."}
+        </p>
+      )}
       <div className="detail-divider" />
       <div className="flex justify-between text-[10px]">
         <span>Connected to</span>
         <span className="text-muted-foreground">{related.length}</span>
       </div>
-      {related.slice(0, 4).map((n) => (
+      {related.map(({ other, outgoing, label }) => (
         <Button
-          key={n.id}
+          key={`${outgoing ? "out" : "in"}-${other.id}`}
           variant="ghost"
-          className="w-full justify-start h-7 p-0 text-[10px]"
-          onClick={() => onSelect(n.id)}
+          className="w-full justify-start h-8 p-0 text-[10px]"
+          title={`${outgoing ? node.name : other.name} → ${outgoing ? other.name : node.name}: ${label}`}
+          onClick={() => onSelect(other.id)}
         >
-          <span className={`legend-dot ${n.type}`} />
-          {n.name}
-          <ChevronRight size={11} className="ml-auto text-muted-foreground" />
+          <span className={`legend-dot ${other.type}`} />
+          <span className="truncate">{other.name}</span>
+          <span className="connection-label ml-auto truncate">
+            {outgoing ? "→" : "←"} {label}
+          </span>
+          <ChevronRight size={11} className="text-muted-foreground shrink-0" />
         </Button>
       ))}
     </aside>
   );
 }
-function Insights({ onOpen }: { onOpen: () => void }) {
+
+const insightStyles = {
+  Architecture: { icon: Network, color: "text-blue" },
+  Attention: { icon: TriangleAlert, color: "text-amber" },
+  "Best practice": { icon: ShieldCheck, color: "text-primary" },
+} as const;
+
+function Insights({
+  insights,
+  byId,
+  onInspect,
+}: {
+  insights: ArchitectureGraph["insights"];
+  byId: Map<string, GraphComponent>;
+  onInspect: (id: string) => void;
+}) {
   return (
     <div className="insights-grid">
-      {insights.map((s, i) => {
-        const Icon = [Network, TriangleAlert, ShieldCheck][i] ?? Network;
+      {insights.map((s) => {
+        const { icon: Icon, color } = insightStyles[s.kind];
+        const involved = s.componentIds.flatMap((id) => byId.get(id) ?? []);
         return (
           <div className="insight" key={s.title}>
             <div className="insight-top">
-              <Icon
-                size={16}
-                className={i === 1 ? "text-amber" : i === 0 ? "text-blue" : "text-primary"}
-              />
+              <Icon size={16} className={color} />
               <span className="insight-tag">{s.kind}</span>
             </div>
             <h3>{s.title}</h3>
             <p>{s.text}</p>
-            {i === 1 && (
-              <Button
-                variant="link"
-                className="p-0 h-5 text-[10px] mt-2 text-amber"
-                onClick={onOpen}
-              >
-                Inspect dependency
-                <ArrowRight size={11} />
-              </Button>
+            {involved.length > 0 && (
+              <div className="flex flex-wrap gap-x-3 mt-2">
+                {involved.slice(0, 3).map((c) => (
+                  <Button
+                    key={c.id}
+                    variant="link"
+                    className={`p-0 h-5 text-[10px] ${color}`}
+                    onClick={() => onInspect(c.id)}
+                  >
+                    {c.name}
+                    <ArrowRight size={11} />
+                  </Button>
+                ))}
+              </div>
             )}
           </div>
         );

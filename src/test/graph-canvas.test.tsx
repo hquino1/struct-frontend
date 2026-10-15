@@ -1,0 +1,82 @@
+import { fireEvent, render, screen } from "@testing-library/react";
+import { beforeAll, describe, expect, it, vi } from "vitest";
+
+import { GraphCanvas } from "@/components/graph-canvas";
+import type { ComponentType } from "@/lib/api";
+import { layoutGraph } from "@/lib/graph";
+
+beforeAll(() => {
+  // jsdom has no layout, so report a fixed canvas size.
+  globalThis.ResizeObserver = class {
+    constructor(private readonly callback: ResizeObserverCallback) {}
+    observe() {
+      this.callback(
+        [{ contentRect: { width: 900, height: 540 } } as ResizeObserverEntry],
+        this as unknown as ResizeObserver,
+      );
+    }
+    unobserve() {}
+    disconnect() {}
+  };
+});
+
+const types: ComponentType[] = ["frontend", "service", "service", "data", "external"];
+const components = Array.from({ length: 18 }, (_, i) => ({
+  id: `c-${i}`,
+  name: `Component ${i}`,
+  type: types[i % types.length]!,
+  tech: "TypeScript",
+  description: "",
+  paths: [],
+  entryPoint: "",
+  files: 0,
+}));
+const connections = components
+  .slice(1)
+  .map((c, i) => ({ from: `c-${i}`, to: c.id, label: `link ${i}` }));
+const layout = layoutGraph({ components, connections });
+
+describe("GraphCanvas", () => {
+  it("draws every component and connection, and reports clicks", () => {
+    const onSelect = vi.fn();
+    const { container } = render(
+      <GraphCanvas
+        layout={layout}
+        selected="c-0"
+        onSelect={onSelect}
+        isDimmed={(id) => id === "c-5"}
+        caption="System architecture"
+      />,
+    );
+
+    expect(screen.getAllByRole("button", { name: /^Select / })).toHaveLength(18);
+    expect(container.querySelectorAll(".edges g")).toHaveLength(17);
+    expect(screen.getByRole("button", { name: "Select Component 0" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.getByRole("button", { name: "Select Component 5" })).toHaveClass("dimmed");
+
+    fireEvent.click(screen.getByRole("button", { name: "Select Component 7" }));
+    expect(onSelect).toHaveBeenCalledWith("c-7");
+  });
+
+  it("zooms with the controls and fits back", () => {
+    render(
+      <GraphCanvas
+        layout={layout}
+        selected={undefined}
+        onSelect={() => {}}
+        isDimmed={() => false}
+        caption=""
+      />,
+    );
+    const fitted = screen.getByText(/^\d+%$/).textContent;
+
+    fireEvent.click(screen.getByTitle("Zoom in"));
+    expect(screen.getByText(/^\d+%$/).textContent).not.toBe(fitted);
+
+    fireEvent.click(screen.getByTitle("Fit graph"));
+    expect(screen.getByText(/^\d+%$/).textContent).toBe(fitted);
+  });
+});
