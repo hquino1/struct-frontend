@@ -4,11 +4,13 @@ import {
   createProject,
   getAnalysis,
   getGraph,
+  getView,
   listProjects,
   startAnalysis,
   type Analysis,
   type CreateProjectInput,
   type Project,
+  type ViewId,
 } from "@/lib/api";
 
 // Shared by every page so the sidebar, the projects page, and the workspace read one cached list.
@@ -106,6 +108,16 @@ export function useGraph(analysis: Analysis | null | undefined) {
     queryKey: ["graph", analysis?.projectId, analysis?.analysisId],
     queryFn: () => getGraph(analysis!.projectId),
     enabled: analysis?.status === "COMPLETE",
+    staleTime: Infinity,
+  });
+}
+
+// One explore view, fetched only when the run built it and the user opens it.
+export function useView(analysis: Analysis | null | undefined, view: ViewId | undefined) {
+  return useQuery({
+    queryKey: ["view", analysis?.projectId, analysis?.analysisId, view],
+    queryFn: () => getView(analysis!.projectId, view!),
+    enabled: analysis?.status === "COMPLETE" && !!view && analysis.views?.[view] === "COMPLETE",
     staleTime: Infinity,
   });
 }

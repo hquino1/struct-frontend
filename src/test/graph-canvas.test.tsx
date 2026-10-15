@@ -1,9 +1,9 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 
 import { GraphCanvas } from "@/components/graph-canvas";
 import type { ComponentType } from "@/lib/api";
-import { layoutGraph } from "@/lib/graph";
+import { layoutGraph, layoutView, viewMeta } from "@/lib/graph";
 
 beforeAll(() => {
   // jsdom has no layout, so report a fixed canvas size.
@@ -78,5 +78,44 @@ describe("GraphCanvas", () => {
 
     fireEvent.click(screen.getByTitle("Fit graph"));
     expect(screen.getByText(/^\d+%$/).textContent).toBe(fitted);
+  });
+});
+
+describe("GraphCanvas field cards", () => {
+  it("lists a table's fields with key markers, folding the overflow", () => {
+    const fields = [
+      { name: "id", type: "serial", key: "primary" as const },
+      { name: "customer_id", type: "integer", key: "foreign" as const },
+      { name: "email", type: "text", key: "unique" as const },
+      ...Array.from({ length: 9 }, (_, i) => ({ name: `col_${i}`, type: "text" })),
+    ];
+    const tableLayout = layoutView(
+      {
+        nodes: [
+          { id: "orders", name: "orders", kind: "table", detail: "", group: "PostgreSQL", fields },
+        ],
+        edges: [],
+      },
+      viewMeta["Database schema"]!,
+      () => undefined,
+    );
+    render(
+      <GraphCanvas
+        layout={tableLayout}
+        selected="orders"
+        onSelect={() => {}}
+        isDimmed={() => false}
+        caption=""
+      />,
+    );
+    const card = screen.getByRole("button", { name: "Select orders" });
+
+    expect(card).toHaveStyle({ height: `${tableLayout.nodes[0]!.node.height}px` });
+    expect(within(card).getByText("customer_id")).toBeInTheDocument();
+    expect(within(card).getByLabelText("Primary key")).toBeInTheDocument();
+    expect(within(card).getByLabelText("Foreign key")).toBeInTheDocument();
+    expect(within(card).getByText("col_6")).toBeInTheDocument();
+    expect(within(card).queryByText("col_7")).not.toBeInTheDocument();
+    expect(within(card).getByText("+2 more")).toBeInTheDocument();
   });
 });

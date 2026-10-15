@@ -71,6 +71,8 @@ export interface Analysis {
   commit?: string;
   stats?: { files: number; languages: Record<string, number> };
   error?: string;
+  // Which explore views the run built; missing on runs from before views existed.
+  views?: Partial<Record<ViewId, ViewStatus>>;
 }
 
 export async function getAnalysis(projectId: string) {
@@ -117,4 +119,40 @@ export type GraphComponent = ArchitectureGraph["components"][number];
 
 export function getGraph(projectId: string) {
   return apiFetch<ArchitectureGraph>(`/projects/${encodeURIComponent(projectId)}/graph`);
+}
+
+export type ViewId = "dependencies" | "calls" | "schema" | "api" | "infrastructure" | "ci-cd";
+// NOT_APPLICABLE: the repository has nothing the view draws, e.g. no CI configuration.
+export type ViewStatus = "COMPLETE" | "NOT_APPLICABLE" | "FAILED";
+
+// An explore view built from files with a known structure, e.g. CI/CD workflows.
+export interface ViewGraph {
+  projectId: string;
+  analysisId: string;
+  view: ViewId;
+  nodes: {
+    id: string;
+    name: string;
+    kind: string;
+    detail: string;
+    // The band it is drawn in, e.g. its workflow.
+    group: string;
+    path?: string;
+    componentId?: string;
+    // Columns or attributes, for views of data such as the database schema.
+    fields?: ViewField[];
+  }[];
+  edges: { from: string; to: string; label: string }[];
+}
+
+export type ViewNode = ViewGraph["nodes"][number];
+
+export interface ViewField {
+  name: string;
+  type: string;
+  key?: "primary" | "foreign" | "partition" | "sort" | "unique";
+}
+
+export function getView(projectId: string, view: ViewId) {
+  return apiFetch<ViewGraph>(`/projects/${encodeURIComponent(projectId)}/views/${view}`);
 }

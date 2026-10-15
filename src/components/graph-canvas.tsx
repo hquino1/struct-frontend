@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState, type PointerEvent, type ReactNode } from "react";
 import { FileCode2, Maximize, ZoomIn, ZoomOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { NODE_HEIGHT, NODE_WIDTH, nodeIcons, typeLabels, type GraphLayout } from "@/lib/graph";
+import { MAX_CARD_FIELDS, NODE_WIDTH, type GraphLayout } from "@/lib/graph";
+import { FieldKey } from "@/components/field-key";
 
 const MIN_SCALE = 0.25;
 const MAX_SCALE = 1.75;
@@ -146,7 +147,7 @@ export function GraphCanvas({
         }}
       >
         {layout.lanes.map((lane) => (
-          <span key={lane.label} className="layer-label" style={{ left: lane.x, top: 40 }}>
+          <span key={lane.label} className="layer-label" style={{ left: lane.x, top: lane.y }}>
             {lane.label}
           </span>
         ))}
@@ -182,7 +183,7 @@ export function GraphCanvas({
                   d={edge.path}
                   markerEnd={`url(#${highlight ? "arrow-highlight" : "arrow"})`}
                 />
-                {(labelAll || highlight) && (
+                {(labelAll || highlight) && edge.label && (
                   <text x={edge.labelX} y={edge.labelY - 5} textAnchor="middle">
                     {edge.label}
                   </text>
@@ -192,37 +193,52 @@ export function GraphCanvas({
           })}
         </svg>
         {layout.nodes.map(({ node, x, y }) => {
-          const Icon = nodeIcons[node.type];
+          const Icon = node.icon;
           return (
             <Button
               key={node.id}
               variant="ghost"
               className={`graph-node ${node.id === selected ? "chosen" : ""} ${isDimmed(node.id) ? "dimmed" : ""}`}
-              style={{ left: x, top: y }}
+              style={{ left: x, top: y, height: node.height }}
               aria-label={`Select ${node.name}`}
               aria-pressed={node.id === selected}
               onClick={() => onSelect(node.id)}
             >
               <div className="node-top">
-                <span className={`node-icon ${node.type}`}>
+                <span className={`node-icon ${node.tone}`}>
                   <Icon size={15} />
                 </span>
                 <div className="min-w-0">
                   <div className="node-title truncate" title={node.name}>
                     {node.name}
                   </div>
-                  <div className="node-technology truncate" title={node.tech}>
-                    {node.tech}
+                  <div className="node-technology truncate" title={node.subtitle}>
+                    {node.subtitle}
                   </div>
                 </div>
               </div>
-              <div className="node-bottom">
-                <span>
-                  <FileCode2 size={9} className="inline mr-1" />
-                  {node.paths.length ? `${node.files} files` : "No code here"}
-                </span>
-                <span>{typeLabels[node.type]}</span>
-              </div>
+              {node.fields ? (
+                <ul className="node-fields">
+                  {node.fields.slice(0, MAX_CARD_FIELDS).map((f) => (
+                    <li key={f.name}>
+                      <FieldKey field={f} />
+                      <span className="truncate">{f.name}</span>
+                      <span className="field-type truncate">{f.type}</span>
+                    </li>
+                  ))}
+                  {node.fields.length > MAX_CARD_FIELDS && (
+                    <li className="more">+{node.fields.length - MAX_CARD_FIELDS} more</li>
+                  )}
+                </ul>
+              ) : (
+                <div className="node-bottom">
+                  <span className="truncate">
+                    <FileCode2 size={9} className="inline mr-1" />
+                    {node.footLeft}
+                  </span>
+                  <span className="shrink-0 pl-2">{node.footRight}</span>
+                </div>
+              )}
             </Button>
           );
         })}
@@ -259,7 +275,7 @@ export function GraphCanvas({
               x={x}
               y={y}
               width={NODE_WIDTH}
-              height={NODE_HEIGHT}
+              height={node.height}
               rx="8"
             />
           ))}
