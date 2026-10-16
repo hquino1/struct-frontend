@@ -27,6 +27,7 @@ import {
   HelpCircle,
   Moon,
   MoreHorizontal,
+  AppWindow,
   Network,
   PanelLeftClose,
   PanelLeftOpen,
@@ -60,7 +61,7 @@ export const Route = createFileRoute("/_app")({
   component: AppShell,
 });
 
-const viewIcons = [Network, GitFork, Braces, Database, ArrowRight, Globe, Workflow];
+const viewIcons = [Network, AppWindow, GitFork, Braces, Database, ArrowRight, Globe, Workflow];
 const isMobile = () => window.matchMedia("(max-width: 700px)").matches;
 
 type ShellModal = "import" | "documentation" | "help" | "account" | "notifications";
@@ -372,8 +373,9 @@ function AppShell() {
         {modal === "documentation" && (
           <Modal title="Documentation" onClose={closeModal}>
             <p>
-              Explore a project through architecture, dependencies, function calls, database
-              relationships, API interactions, cloud infrastructure, and CI/CD views.
+              Explore a project through architecture, screens and the API calls behind them,
+              dependencies, function calls, database relationships, API interactions, cloud
+              infrastructure, and CI/CD views.
             </p>
             <p>
               Select a component to inspect its entry point and connections. Export a map as JSON to

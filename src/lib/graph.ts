@@ -1,4 +1,5 @@
 import {
+  AppWindow,
   Box,
   Braces,
   CircleAlert,
@@ -10,6 +11,7 @@ import {
   FileJson,
   Globe,
   Inbox,
+  LayoutTemplate,
   KeyRound,
   MonitorSmartphone,
   MoreHorizontal,
@@ -37,6 +39,7 @@ import type {
 
 export type View =
   | "System architecture"
+  | "Screen flows"
   | "Dependencies"
   | "Function calls"
   | "Database schema"
@@ -45,6 +48,7 @@ export type View =
   | "CI/CD workflows";
 export const views: View[] = [
   "System architecture",
+  "Screen flows",
   "Dependencies",
   "Function calls",
   "Database schema",
@@ -81,12 +85,36 @@ export interface ViewMeta {
   kinds: Record<string, NodeKind>;
   // A one-line count for the canvas caption, e.g. "2 workflows · 9 jobs".
   summary: (nodes: ViewNode[]) => string;
+  // Selecting a node fades everything it isn't directly connected to, so one screen's
+  // slice of the system, or everything that depends on one endpoint, stands out.
+  focus?: boolean;
 }
 
 const count = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
 // The explore views the analyzer builds. Views missing here aren't generated yet.
 export const viewMeta: Partial<Record<View, ViewMeta>> = {
+  "Screen flows": {
+    id: "screens",
+    groupLabel: "Section",
+    lanes: "groups",
+    focus: true,
+    empty:
+      "No screens found. Struct reads Next.js and Expo Router pages, React Router and TanStack Router routes, and React Navigation screens, then follows each one to the API calls it makes.",
+    kinds: {
+      page: { label: "Screen", tone: "frontend", icon: AppWindow },
+      layout: { label: "Layout", tone: "frontend", icon: LayoutTemplate },
+      shared: { label: "Shared by every page", tone: "frontend", icon: Component },
+      endpoint: { label: "Endpoint", tone: "service", icon: Route },
+      missing: { label: "No matching route", tone: "data", icon: CircleAlert },
+      remote: { label: "External API", tone: "external", icon: Cloud },
+    },
+    summary: (nodes) => {
+      const screens = nodes.filter((n) => n.kind === "page" || n.kind === "layout").length;
+      const endpoints = nodes.filter((n) => n.kind === "endpoint").length;
+      return `${count(screens, "screen")} · ${count(endpoints, "endpoint")}`;
+    },
+  },
   Dependencies: {
     id: "dependencies",
     groupLabel: "Section",

@@ -1077,16 +1077,26 @@ function ExploreView({
     );
   if (!data || !layout || !current) return null;
 
+  // In a focus view, a node the user picks fades everything it isn't linked to.
+  const focused = meta.focus && selectedId ? current.id : undefined;
+  const linked = new Set(
+    focused
+      ? data.edges.flatMap((e) => (e.from === focused ? [e.to] : e.to === focused ? [e.from] : []))
+      : [],
+  );
   const isDimmed = (id: string) => {
+    if (focused && id !== focused && !linked.has(id)) return true;
     const n = nodesById.get(id);
     return !!query && !!n && !`${n.name} ${n.detail}`.toLowerCase().includes(query.toLowerCase());
   };
+  // Picking the focused node again shows the whole view.
+  const select = (id: string) => setSelectedId(meta.focus && id === selectedId ? undefined : id);
   return (
     <div className="graph-body">
       <GraphCanvas
         layout={layout}
         selected={current.id}
-        onSelect={setSelectedId}
+        onSelect={select}
         isDimmed={isDimmed}
         caption={
           <>

@@ -121,7 +121,8 @@ export function getGraph(projectId: string) {
   return apiFetch<ArchitectureGraph>(`/projects/${encodeURIComponent(projectId)}/graph`);
 }
 
-export type ViewId = "dependencies" | "calls" | "schema" | "api" | "infrastructure" | "ci-cd";
+export type ViewId =
+  "screens" | "dependencies" | "calls" | "schema" | "api" | "infrastructure" | "ci-cd";
 // NOT_APPLICABLE: the repository has nothing the view draws, e.g. no CI configuration.
 export type ViewStatus = "COMPLETE" | "NOT_APPLICABLE" | "FAILED";
 
