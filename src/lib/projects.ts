@@ -2,14 +2,17 @@ import { queryOptions, useMutation, useQuery, useQueryClient } from "@tanstack/r
 import { useEffect } from "react";
 import {
   createProject,
+  deleteProject,
   getAnalysis,
   getGraph,
   getView,
   listProjects,
   startAnalysis,
+  updateProject,
   type Analysis,
   type CreateProjectInput,
   type Project,
+  type UpdateProjectInput,
   type ViewId,
 } from "@/lib/api";
 
@@ -37,6 +40,35 @@ export function useCreateProject() {
   });
 }
 
+export function useUpdateProject(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: UpdateProjectInput) => updateProject(projectId, input),
+    onSuccess: (updated) => {
+      queryClient.setQueryData<Project[]>(projectsQuery.queryKey, (list) =>
+        list?.map((p) => (p.projectId === projectId ? updated : p)),
+      );
+    },
+  });
+}
+
+export function useDeleteProject() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (projectId: string) => deleteProject(projectId),
+    onSuccess: (_, projectId) => {
+      queryClient.setQueryData<Project[]>(projectsQuery.queryKey, (list) =>
+        list?.filter((p) => p.projectId !== projectId),
+      );
+      // Stops analysis polling and drops the project's cached graph and views.
+      for (const key of ["analysis", "graph", "view"]) {
+        queryClient.removeQueries({ queryKey: [key, projectId] });
+      }
+      if (getLastProjectId() === projectId) clearLastProjectId();
+    },
+  });
+}
+
 export const repoPath = (project: Project) => project.repoUrl.replace("https://github.com/", "");
 
 // Remembered so `/` can reopen the project the user was last looking at.
@@ -55,6 +87,14 @@ export function setLastProjectId(projectId: string) {
     localStorage.setItem(LAST_PROJECT_KEY, projectId);
   } catch {
     // Storage can be blocked; `/` then falls back to the newest project.
+  }
+}
+
+function clearLastProjectId() {
+  try {
+    localStorage.removeItem(LAST_PROJECT_KEY);
+  } catch {
+    // Nothing to clear when storage is blocked.
   }
 }
 

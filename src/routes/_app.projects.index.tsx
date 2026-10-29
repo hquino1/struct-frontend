@@ -1,7 +1,10 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { ArrowRight, FolderGit2, GitBranch, Plus, ShieldCheck } from "lucide-react";
+import { useState } from "react";
+import { FolderGit2, GitBranch, Plus, ShieldCheck, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { DeleteProjectModal } from "@/components/project-dialogs";
 import { useShell } from "@/hooks/use-shell";
+import type { Project } from "@/lib/api";
 import { repoPath, useProjects } from "@/lib/projects";
 
 export const Route = createFileRoute("/_app/projects/")({
@@ -14,6 +17,7 @@ const dateFormat = new Intl.DateTimeFormat(undefined, { dateStyle: "medium" });
 function ProjectsPage() {
   const { query, openImport } = useShell();
   const { data: projects = [], status, refetch } = useProjects();
+  const [deleting, setDeleting] = useState<Project | null>(null);
   const term = query.trim().toLowerCase();
   const visible = term
     ? projects.filter((p) => `${p.name} ${repoPath(p)}`.toLowerCase().includes(term))
@@ -70,13 +74,14 @@ function ProjectsPage() {
               <span />
             </div>
             {visible.map((p) => (
-              <Link
-                key={p.projectId}
-                to="/projects/$projectId"
-                params={{ projectId: p.projectId }}
-                className="projects-row"
-              >
-                <span className="font-medium truncate">{p.name}</span>
+              <div key={p.projectId} className="projects-row">
+                <Link
+                  to="/projects/$projectId"
+                  params={{ projectId: p.projectId }}
+                  className="projects-row-link font-medium truncate"
+                >
+                  {p.name}
+                </Link>
                 <span className="projects-repo truncate">
                   <FolderGit2 size={12} />
                   {repoPath(p)}
@@ -88,12 +93,23 @@ function ProjectsPage() {
                 <span className="text-muted-foreground">
                   {dateFormat.format(new Date(p.createdAt))}
                 </span>
-                <ArrowRight size={13} className="text-muted-foreground justify-self-end" />
-              </Link>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="projects-row-action h-7 w-7 text-muted-foreground hover:text-destructive"
+                  title={`Delete ${p.name}`}
+                  aria-label={`Delete ${p.name}`}
+                  onClick={() => setDeleting(p)}
+                >
+                  <Trash2 />
+                </Button>
+              </div>
             ))}
           </>
         )}
       </section>
+
+      {deleting && <DeleteProjectModal project={deleting} onClose={() => setDeleting(null)} />}
 
       <footer className="footer">
         <span className="flex items-center gap-1.5">

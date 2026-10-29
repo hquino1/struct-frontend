@@ -58,6 +58,24 @@ export function createProject(input: CreateProjectInput) {
   return apiFetch<Project>("/projects", { method: "POST", body: JSON.stringify(input) });
 }
 
+// The repository can't change; a new branch takes effect on the next analysis.
+export interface UpdateProjectInput {
+  name?: string;
+  branch?: string;
+}
+
+export function updateProject(projectId: string, input: UpdateProjectInput) {
+  return apiFetch<Project>(`/projects/${encodeURIComponent(projectId)}`, {
+    method: "PATCH",
+    body: JSON.stringify(input),
+  });
+}
+
+// Also deletes the project's saved graph and views.
+export async function deleteProject(projectId: string) {
+  await apiFetch<void>(`/projects/${encodeURIComponent(projectId)}`, { method: "DELETE" });
+}
+
 export const analysisSteps = ["clone", "detect", "map", "trace", "insights"] as const;
 export type AnalysisStep = (typeof analysisSteps)[number];
 

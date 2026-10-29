@@ -26,6 +26,7 @@ import { Button } from "@/components/ui/button";
 import { Modal } from "@/components/modal";
 import { FieldKey } from "@/components/field-key";
 import { GraphCanvas } from "@/components/graph-canvas";
+import { ProjectActions } from "@/components/project-dialogs";
 import { useShell } from "@/hooks/use-shell";
 import {
   kindOf,
@@ -215,6 +216,9 @@ function PreAnalysis({ project, analysis }: { project: Project; analysis: Analys
             </span>
           </div>
           <p>Imported {dateFormat.format(new Date(project.createdAt))}</p>
+        </div>
+        <div className="heading-actions">
+          <ProjectActions project={project} />
         </div>
       </div>
       <div className="repo-bar">
@@ -536,6 +540,7 @@ function Workspace({ project, analysis }: { project: Project; analysis: Analysis
           </p>
         </div>
         <div className="heading-actions">
+          <ProjectActions project={project} />
           <Button size="sm" disabled={start.isPending} onClick={analyze}>
             <Sparkles />
             {start.isPending ? "Starting..." : "Re-analyze"}
