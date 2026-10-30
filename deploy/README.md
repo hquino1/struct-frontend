@@ -135,7 +135,7 @@ The distribution takes a few minutes to deploy. Then:
 
 ```powershell
 curl.exe -I "https://$distDomain/projects"   # 200, the SPA shell
-curl.exe "https://$distDomain/api"            # Hello World! from the API
+curl.exe -i "https://$distDomain/api/projects"   # 401 from the API (503 if no task is running)
 ```
 
 ## Notes
