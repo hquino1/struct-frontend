@@ -1,0 +1,62 @@
+{
+  "CallerReference": "struct-frontend",
+  "Comment": "Struct frontend (S3) and API (internal ALB)",
+  "Enabled": true,
+  "PriceClass": "PriceClass_100",
+  "HttpVersion": "http2and3",
+  "IsIPV6Enabled": true,
+  "ViewerCertificate": { "CloudFrontDefaultCertificate": true },
+  "Origins": {
+    "Quantity": 2,
+    "Items": [
+      {
+        "Id": "s3",
+        "DomainName": "struct-frontend-094289742685.s3.us-east-2.amazonaws.com",
+        "S3OriginConfig": { "OriginAccessIdentity": "" },
+        "OriginAccessControlId": "REPLACE_WITH_OAC_ID"
+      },
+      {
+        "Id": "api",
+        "DomainName": "REPLACE_WITH_INTERNAL_ALB_DNS",
+        "VpcOriginConfig": {
+          "VpcOriginId": "REPLACE_WITH_VPC_ORIGIN_ID",
+          "OriginReadTimeout": 30,
+          "OriginKeepaliveTimeout": 5
+        }
+      }
+    ]
+  },
+  "DefaultCacheBehavior": {
+    "TargetOriginId": "s3",
+    "ViewerProtocolPolicy": "redirect-to-https",
+    "Compress": true,
+    "CachePolicyId": "658327ea-f89d-4fab-a63d-7e88639e58f6",
+    "AllowedMethods": {
+      "Quantity": 2,
+      "Items": ["GET", "HEAD"],
+      "CachedMethods": { "Quantity": 2, "Items": ["GET", "HEAD"] }
+    },
+    "FunctionAssociations": {
+      "Quantity": 1,
+      "Items": [{ "EventType": "viewer-request", "FunctionARN": "REPLACE_WITH_FUNCTION_ARN" }]
+    }
+  },
+  "CacheBehaviors": {
+    "Quantity": 1,
+    "Items": [
+      {
+        "PathPattern": "/api/*",
+        "TargetOriginId": "api",
+        "ViewerProtocolPolicy": "https-only",
+        "Compress": true,
+        "CachePolicyId": "4135ea2d-6df8-44a3-9df3-4b5a84be39ad",
+        "OriginRequestPolicyId": "b689b0a8-53d0-40ab-baf2-68738e2966ac",
+        "AllowedMethods": {
+          "Quantity": 7,
+          "Items": ["GET", "HEAD", "OPTIONS", "PUT", "POST", "PATCH", "DELETE"],
+          "CachedMethods": { "Quantity": 2, "Items": ["GET", "HEAD"] }
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,58 @@
+# Builds the static SPA, uploads it to S3 and clears the CloudFront cache.
+# AWS access comes from the struct-github-deploy role via OIDC (no stored keys).
+
+name: Deploy frontend
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+# Never run two deploys at once; a newer push waits for the current one.
+concurrency:
+  group: deploy-frontend
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: us-east-2
+  AWS_ROLE: arn:aws:iam::094289742685:role/struct-github-deploy
+  BUCKET: struct-frontend-094289742685
+  DISTRIBUTION_ID: E1GJMLZYXXMPZG
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+      - run: npm test
+
+      # Same origin as the site: CloudFront routes /api/* to the backend.
+      - run: npm run build
+        env:
+          VITE_API_URL: /api
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ROLE }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # Hashed assets are cached for a year and never deleted, so a browser still on the
+      # previous shell can lazy-load its old chunks. Everything else is revalidated each time.
+      - name: Upload to S3
+        run: |
+          aws s3 sync .output/public/assets "s3://$BUCKET/assets" --cache-control "public,max-age=31536000,immutable"
+          aws s3 sync .output/public "s3://$BUCKET" --exclude "assets/*" --cache-control "no-cache" --delete
+
+      - name: Invalidate CloudFront
+        run: aws cloudfront create-invalidation --distribution-id "$DISTRIBUTION_ID" --paths "/*"

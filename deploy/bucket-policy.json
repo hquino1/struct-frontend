@@ -1,0 +1,15 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "CloudFrontReadOnly",
+      "Effect": "Allow",
+      "Principal": { "Service": "cloudfront.amazonaws.com" },
+      "Action": "s3:GetObject",
+      "Resource": "arn:aws:s3:::struct-frontend-094289742685/*",
+      "Condition": {
+        "StringEquals": { "AWS:SourceArn": "REPLACE_WITH_DISTRIBUTION_ARN" }
+      }
+    }
+  ]
+}
