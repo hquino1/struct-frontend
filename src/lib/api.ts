@@ -9,6 +9,8 @@ export interface Project {
   repoUrl: string;
   branch: string;
   createdAt: string;
+  // Read through the Struct GitHub App rather than anonymously.
+  private: boolean;
   analysisStatus: "NOT_STARTED" | Analysis["status"];
   // The step the latest analysis is on (or stopped at); null before the first run.
   analysisStep: AnalysisStep | null;
@@ -74,6 +76,28 @@ export function updateProject(projectId: string, input: UpdateProjectInput) {
 // Also deletes the project's saved graph and views.
 export async function deleteProject(projectId: string) {
   await apiFetch<void>(`/projects/${encodeURIComponent(projectId)}`, { method: "DELETE" });
+}
+
+export interface GitHubConnection {
+  // False when the backend has no GitHub App configured; only public repositories work then.
+  enabled: boolean;
+  login: string | null;
+  // GitHub's page for choosing which repositories Struct can read.
+  installUrl: string | null;
+  // Connects the account without changing which repositories Struct can read.
+  authorizeUrl: string | null;
+}
+
+export function getGitHubConnection() {
+  return apiFetch<GitHubConnection>("/github/connection");
+}
+
+// Finishes GitHub's redirect to /github/callback.
+export function connectGitHub(input: { code: string; state: string }) {
+  return apiFetch<GitHubConnection>("/github/connection", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
 }
 
 export const analysisSteps = ["clone", "detect", "map", "trace", "insights"] as const;

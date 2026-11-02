@@ -1,9 +1,11 @@
 import { queryOptions, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 import {
+  connectGitHub,
   createProject,
   deleteProject,
   getAnalysis,
+  getGitHubConnection,
   getGraph,
   getView,
   listProjects,
@@ -11,6 +13,7 @@ import {
   updateProject,
   type Analysis,
   type CreateProjectInput,
+  type GitHubConnection,
   type Project,
   type UpdateProjectInput,
   type ViewId,
@@ -65,6 +68,27 @@ export function useDeleteProject() {
         queryClient.removeQueries({ queryKey: [key, projectId] });
       }
       if (getLastProjectId() === projectId) clearLastProjectId();
+    },
+  });
+}
+
+export const githubConnectionQuery = queryOptions({
+  queryKey: ["github"],
+  queryFn: getGitHubConnection,
+  // The links it returns carry a signed state that expires after an hour.
+  staleTime: 10 * 60_000,
+});
+
+export function useGitHubConnection() {
+  return useQuery(githubConnectionQuery);
+}
+
+export function useConnectGitHub() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: connectGitHub,
+    onSuccess: (connection) => {
+      queryClient.setQueryData<GitHubConnection>(githubConnectionQuery.queryKey, connection);
     },
   });
 }

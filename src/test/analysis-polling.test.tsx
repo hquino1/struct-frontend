@@ -11,6 +11,8 @@ vi.mock("@/lib/api", () => ({
   startAnalysis: vi.fn(),
   listProjects: vi.fn(),
   createProject: vi.fn(),
+  getGitHubConnection: vi.fn(),
+  connectGitHub: vi.fn(),
 }));
 const api = await import("@/lib/api");
 const { projectsQuery, useAnalysis, useStartAnalysis } = await import("@/lib/projects");
@@ -29,6 +31,7 @@ const project: Project = {
   projectId: "p1",
   name: "shop",
   repoUrl: "https://github.com/acme/shop",
+  private: false,
   branch: "main",
   createdAt: "2026-10-15T11:00:00.000Z",
   analysisStatus: "NOT_STARTED",

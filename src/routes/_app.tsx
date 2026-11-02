@@ -43,7 +43,13 @@ import { Modal } from "@/components/modal";
 import { ShellContext } from "@/hooks/use-shell";
 import { useTheme } from "@/hooks/use-theme";
 import { views } from "@/lib/graph";
-import { useAnalysis, useCreateProject, useGraph, useProjects } from "@/lib/projects";
+import {
+  useAnalysis,
+  useCreateProject,
+  useGitHubConnection,
+  useGraph,
+  useProjects,
+} from "@/lib/projects";
 
 // Pathless layout: every signed-in page renders inside this sidebar + top bar shell.
 export const Route = createFileRoute("/_app")({
@@ -483,6 +489,7 @@ function ImportModal({
   const fileRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
   const create = useCreateProject();
+  const { data: github } = useGitHubConnection();
   const repoName = /github\.com\/[^/]+\/([^/]+?)(?:\.git)?\/?$/.exec(repo.trim())?.[1];
   const error = create.error instanceof Error ? create.error.message : "";
 
@@ -514,6 +521,26 @@ function ImportModal({
           }}
         />
       </label>
+      {github?.enabled && github.installUrl && (
+        <p className="text-xs">
+          {github.login ? (
+            <>
+              Connected to GitHub as @{github.login}.{" "}
+              <a className="text-primary underline" href={github.installUrl}>
+                Choose which repositories Struct can read
+              </a>
+            </>
+          ) : (
+            <>
+              Private repository?{" "}
+              <a className="text-primary underline" href={github.installUrl}>
+                Connect GitHub
+              </a>{" "}
+              and choose which repositories Struct can read.
+            </>
+          )}
+        </p>
+      )}
       <label className="text-xs">
         Project name <span className="text-muted-foreground">(optional)</span>
         <input

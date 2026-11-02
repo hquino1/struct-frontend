@@ -56,7 +56,7 @@ function ProjectsPage() {
           <div className="projects-empty">
             <FolderGit2 size={28} className="text-primary" />
             <h2>Import your first repository</h2>
-            <p>Paste a public GitHub URL to map its architecture.</p>
+            <p>Paste a GitHub repository URL to map its architecture.</p>
             <Button size="sm" onClick={openImport}>
               <Plus />
               Import project
