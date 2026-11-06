@@ -8,6 +8,8 @@ import {
   layoutGraph,
   layoutView,
   NODE_HEIGHT,
+  PILL_HEIGHT,
+  simplifyView,
   NODE_WIDTH,
   viewMeta,
   views,
@@ -34,11 +36,13 @@ const graph = (
   connections,
 });
 
-const overlaps = (a: { x: number; y: number }, b: { x: number; y: number }) =>
+// Nodes without a placed height (layoutGraph's cards) are NODE_HEIGHT tall.
+type Box = { x: number; y: number; node?: { height: number } };
+const overlaps = (a: Box, b: Box) =>
   a.x < b.x + NODE_WIDTH &&
   b.x < a.x + NODE_WIDTH &&
-  a.y < b.y + NODE_HEIGHT &&
-  b.y < a.y + NODE_HEIGHT;
+  a.y < b.y + (b.node?.height ?? NODE_HEIGHT) &&
+  b.y < a.y + (a.node?.height ?? NODE_HEIGHT);
 
 describe("layoutGraph", () => {
   it("places every component of a large graph without overlaps, inside the bounds", () => {
@@ -237,8 +241,11 @@ describe("layoutView with lanes (Dependencies)", () => {
     const at = (id: string) => layout.nodes.find((n) => n.node.id === id)!;
     const packageXs = new Set(packages.map((p) => at(p.id).x));
     expect(Math.min(...packageXs)).toBeGreaterThan(at("component:web").x);
-    // 60 packages wrap into a block of 8 columns rather than a 5-row strip of 12.
-    expect(packageXs.size).toBe(8);
+    // Packages are pills, so 60 of them wrap into 5 columns of up to 14 rather than a
+    // block of 8 card columns.
+    expect(packageXs.size).toBe(5);
+    expect(at("package:p0").node).toMatchObject({ compact: true, height: PILL_HEIGHT });
+    expect(at("component:web").node.compact).toBeUndefined();
     for (const [i, a] of layout.nodes.entries()) {
       for (const b of layout.nodes.slice(i + 1)) expect(overlaps(a, b)).toBe(false);
     }
@@ -248,6 +255,83 @@ describe("layoutView with lanes (Dependencies)", () => {
     });
     expect(at("package:p0").node.footRight).toBe("Package");
     expect(layout.edges).toHaveLength(60);
+  });
+
+  const uses = (from: string, ...to: string[]) =>
+    to.map((t) => ({ from: `component:${from}`, to: `package:${t}`, label: "×1" }));
+
+  it("merges packages with the same users into one node listing them", () => {
+    const view = simplifyView(
+      {
+        nodes: [
+          component("web"),
+          component("api"),
+          pkg("@radix-ui/react-tabs"),
+          pkg("@radix-ui/react-slot"),
+          pkg("zod"),
+        ],
+        edges: [
+          ...uses("web", "@radix-ui/react-tabs", "@radix-ui/react-slot", "zod"),
+          ...uses("api", "zod"),
+        ],
+      },
+      meta,
+    );
+
+    const merged = view.nodes.find((n) => n.id.startsWith("merged:"))!;
+    expect(merged).toMatchObject({ name: "@radix-ui/*", kind: "package", group: "Packages" });
+    expect(merged.fields!.map((f) => f.name)).toEqual([
+      "@radix-ui/react-tabs",
+      "@radix-ui/react-slot",
+    ]);
+    // Two edges from web became one that carries both; zod is still drawn on its own.
+    expect(view.edges).toContainEqual(
+      expect.objectContaining({
+        from: "component:web",
+        to: merged.id,
+        weight: 2,
+        label: "2 packages",
+      }),
+    );
+    expect(view.edges).toHaveLength(3);
+    // A merged node is a field card, not a pill.
+    const layout = layoutView(view, meta, () => undefined);
+    expect(layout.nodes.find((n) => n.node.id === merged.id)!.node.compact).toBeUndefined();
+  });
+
+  it("lists packages most components use on one node, without edges", () => {
+    const names = ["a", "b", "c", "d", "e"];
+    const view = simplifyView(
+      {
+        nodes: [...names.map(component), pkg("react"), pkg("lodash"), pkg("zod")],
+        edges: [
+          ...names.flatMap((c) => uses(c, "react")),
+          ...names.slice(0, 3).flatMap((c) => uses(c, "lodash")),
+          // Only one user: stays drawn.
+          ...uses("a", "zod"),
+        ],
+      },
+      meta,
+    );
+
+    const common = view.nodes.find((n) => n.kind === "common")!;
+    expect(common.fields).toEqual([
+      { name: "react", type: "5 of 5" },
+      { name: "lodash", type: "3 of 5" },
+    ]);
+    expect(view.edges).toEqual(uses("a", "zod"));
+    expect(view.nodes.map((n) => n.id)).not.toContain("package:react");
+  });
+
+  it("hides dev packages until asked", () => {
+    const graph = {
+      nodes: [component("web"), { ...pkg("vitest"), kind: "dev" }],
+      edges: uses("web", "vitest"),
+    };
+    const hidden = simplifyView(graph, meta);
+    expect(hidden).toMatchObject({ hidden: 1, edges: [] });
+    expect(hidden.nodes.map((n) => n.id)).toEqual(["component:web"]);
+    expect(simplifyView(graph, meta, { showOptional: true }).nodes).toHaveLength(2);
   });
 
   it("summarises the view for the caption", () => {
@@ -365,6 +449,63 @@ describe("layoutView with field cards (Database schema)", () => {
     expect(meta.summary([table("a", 1), table("b", 1), table("c", 1, "MongoDB")])).toBe(
       "3 entities · 2 databases",
     );
+  });
+});
+
+describe("simplifyView (Screen flows)", () => {
+  const meta = viewMeta["Screen flows"]!;
+  const screen = (id: string) => ({ id, name: id, kind: "page", detail: "", group: "App" });
+  const endpoint = (name: string, group = "API") => ({
+    id: name,
+    name,
+    kind: "endpoint",
+    detail: `Express · handler() · used by 1 screen`,
+    group,
+  });
+
+  it("merges a screen's own endpoints by shared path, keeping their timing label", () => {
+    const view = simplifyView(
+      {
+        nodes: [
+          screen("/settings"),
+          screen("/home"),
+          endpoint("GET /api/users/me"),
+          endpoint("PATCH /api/users/me"),
+          // Same callers, other server: not merged with the ones above.
+          endpoint("GET /billing", "Payments"),
+          endpoint("GET /api/feed"),
+        ],
+        edges: [
+          { from: "/settings", to: "GET /api/users/me", label: "on load" },
+          { from: "/settings", to: "PATCH /api/users/me", label: "on load" },
+          { from: "/settings", to: "GET /billing", label: "on action" },
+          { from: "/home", to: "GET /api/feed", label: "on load" },
+        ],
+      },
+      meta,
+    );
+
+    expect(view.nodes.map((n) => n.name)).toEqual([
+      "/settings",
+      "/home",
+      "/api/users/me",
+      "GET /billing",
+      "GET /api/feed",
+    ]);
+    const merged = view.nodes[2]!;
+    expect(merged.fields![0]).toEqual({ name: "GET /api/users/me", type: "Express · handler()" });
+    expect(view.edges).toContainEqual(
+      expect.objectContaining({ from: "/settings", to: merged.id, label: "on load", weight: 2 }),
+    );
+    expect(view.edges).toHaveLength(3);
+  });
+
+  it("leaves a view with nothing to merge as it is", () => {
+    const graph = {
+      nodes: [screen("/a"), endpoint("GET /x")],
+      edges: [{ from: "/a", to: "GET /x", label: "" }],
+    };
+    expect(simplifyView(graph, meta)).toEqual({ ...graph, hidden: 0 });
   });
 });
 

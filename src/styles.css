@@ -131,6 +131,15 @@
 .heading-actions { display: flex; gap: 9px; padding-top: 6px; }
 .repo-bar { display: flex; align-items: center; gap: 14px; margin: 18px 0 21px; font-size: 11px; color: var(--muted-foreground); }
 .repo-bar .branch { padding: 4px 7px; background: var(--secondary); border-radius: 4px; display: inline-flex; gap: 6px; align-items: center; }
+.repo-bar .branch-trigger { color: inherit; font: inherit; cursor: pointer; border: 1px solid transparent; }
+.repo-bar .branch-trigger:hover:not(:disabled), .repo-bar .branch-trigger[data-state="open"] { color: var(--foreground); border-color: var(--border); }
+.repo-bar .branch-trigger:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
+.repo-bar .branch-trigger:disabled { cursor: default; opacity: .7; }
+.repo-bar .branch-stale { display: inline-flex; gap: 5px; align-items: center; color: var(--primary); font: inherit; cursor: pointer; background: none; border: none; padding: 0; }
+.repo-bar .branch-stale:hover { text-decoration: underline; }
+.modal .branch-select { display: flex; align-items: center; gap: 8px; width: 100%; border: 1px solid var(--border); border-radius: 5px; padding: 10px; background: var(--background); color: var(--foreground); margin: 9px 0 15px; text-align: left; cursor: pointer; outline-color: var(--primary); }
+.modal .branch-select:disabled { cursor: default; opacity: .6; }
+.modal .branch-select[data-state="open"] { border-color: var(--primary); }
 .status-dot { width: 5px; height: 5px; background: var(--primary); border-radius: 50%; display: inline-block; margin-right: 5px; }
 .stats-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0; margin: 28px 0 32px; padding: 19px 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
 .stat-card { padding: 0 24px; border-left: 1px solid var(--border); }
@@ -160,11 +169,25 @@
 .edges text { fill: var(--muted-foreground); font-size: 9px; font-family: var(--font-mono); paint-order: stroke; stroke: var(--canvas); stroke-width: 4px; stroke-linejoin: round; }
 .edges marker path { fill: var(--edge); stroke: none; }
 .edges marker.highlight path { fill: var(--primary); }
+/* Resting edges are tinted by their target's tone and kept quiet, so cards stay the focus. */
+.edges path:not(.highlight) { stroke-opacity: .75; }
+.edges .frontend { stroke: color-mix(in oklab, var(--blue) 35%, var(--edge)); }
+.edges .service { stroke: color-mix(in oklab, var(--primary) 35%, var(--edge)); }
+.edges .data { stroke: color-mix(in oklab, var(--amber) 35%, var(--edge)); }
+.edges .external { stroke: color-mix(in oklab, var(--violet) 35%, var(--edge)); }
+.edges marker.frontend path { fill: color-mix(in oklab, var(--blue) 35%, var(--edge)); }
+.edges marker.service path { fill: color-mix(in oklab, var(--primary) 35%, var(--edge)); }
+.edges marker.data path { fill: color-mix(in oklab, var(--amber) 35%, var(--edge)); }
+.edges marker.external path { fill: color-mix(in oklab, var(--violet) 35%, var(--edge)); }
 .layer-label { position: absolute; font-family: var(--font-mono); font-size: 9px; color: var(--muted-foreground); text-transform: uppercase; }
 .graph-node { position: absolute; width: 176px; height: 91px; border: 1px solid var(--border); border-radius: 7px; background: var(--card); box-shadow: var(--shadow-panel); padding: 13px; white-space: normal; display: block; text-align: left; transition: opacity .2s, border-color .2s; }
 .graph-node:hover { background: var(--secondary); }
 .graph-node.chosen { border-color: var(--primary); box-shadow: 0 0 0 3px color-mix(in oklab, var(--primary) 8%, transparent); }
 .graph-node.dimmed { opacity: .22; }
+/* Pills: one-line leaves (packages, endpoints), PILL_HEIGHT tall in graph.ts. */
+.graph-node.compact { display: flex; align-items: center; gap: 7px; padding: 0 10px 0 6px; border-radius: 15px; }
+.graph-node.compact .node-icon { width: 19px; height: 19px; border-radius: 10px; flex-shrink: 0; }
+.graph-node.compact .node-title { font-size: 10px; font-weight: 550; font-family: var(--font-mono); }
 .node-top { display: flex; gap: 9px; align-items: center; }
 .node-icon { width: 27px; height: 27px; display: grid; place-items: center; border-radius: 5px; background: color-mix(in oklab, var(--blue) 12%, transparent); color: var(--blue); }
 .node-icon.service { color: var(--primary); background: color-mix(in oklab, var(--primary) 12%, transparent); }
@@ -213,9 +236,8 @@
 .modal-backdrop { position: fixed; inset: 0; background: oklch(0.08 0 0 / 75%); z-index: 50; display: grid; place-items: center; padding: 20px; backdrop-filter: blur(5px); }
 .modal { max-width: 560px; width: 100%; background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 26px; box-shadow: var(--shadow-panel); }
 .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
-.modal h2 { font-size: 19px; margin: 0; }.modal p { color: var(--muted-foreground); line-height: 1.8; font-size: 12px; }.modal input[type=text] { width: 100%; border: 1px solid var(--border); border-radius: 5px; padding: 10px; background: var(--background); color: var(--foreground); margin: 9px 0 15px; outline-color: var(--primary); }
+.modal h2 { font-size: 19px; margin: 0; }.modal p { color: var(--muted-foreground); line-height: 1.8; font-size: 12px; }.modal input[type=text], .modal select { width: 100%; border: 1px solid var(--border); border-radius: 5px; padding: 10px; background: var(--background); color: var(--foreground); margin: 9px 0 15px; outline-color: var(--primary); }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
-.upload-zone { border: 1px dashed var(--border); padding: 32px 15px; text-align: center; border-radius: 5px; margin: 15px 0; }.upload-zone svg { margin: 0 auto 10px; color: var(--primary); }
 .code-block { background: var(--background); border: 1px solid var(--border); border-radius: 5px; padding: 18px; color: var(--primary); font-family: var(--font-mono); font-size: 11px; line-height: 1.9; overflow-x: auto; }
 .toast { position: fixed; bottom: 25px; left: 50%; transform: translateX(-50%); background: var(--secondary); border: 1px solid var(--border); padding: 12px 18px; border-radius: 6px; z-index: 70; display: flex; gap: 9px; align-items: center; box-shadow: var(--shadow-panel); font-size: 12px; }
 .projects-list { border: 1px solid var(--border); border-radius: 4px; margin: 28px 0 8px; overflow: hidden; }

@@ -35,9 +35,9 @@ import {
   Search,
   Sparkles,
   Sun,
-  Upload,
   Workflow,
 } from "lucide-react";
+import { BranchField } from "@/components/branch-field";
 import { Button } from "@/components/ui/button";
 import { Modal } from "@/components/modal";
 import { ShellContext } from "@/hooks/use-shell";
@@ -46,6 +46,7 @@ import { views } from "@/lib/graph";
 import {
   useAnalysis,
   useCreateProject,
+  useRepositoryBranches,
   useGitHubConnection,
   useGraph,
   useProjects,
@@ -486,16 +487,22 @@ function ImportModal({
 }) {
   const [repo, setRepo] = useState("");
   const [projectName, setProjectName] = useState("");
-  const fileRef = useRef<HTMLInputElement>(null);
+  // "" imports the repository's default branch.
+  const [branch, setBranch] = useState("");
   const navigate = useNavigate();
   const create = useCreateProject();
+  const branches = useRepositoryBranches(repo.trim());
   const { data: github } = useGitHubConnection();
   const repoName = /github\.com\/[^/]+\/([^/]+?)(?:\.git)?\/?$/.exec(repo.trim())?.[1];
   const error = create.error instanceof Error ? create.error.message : "";
 
   const submit = () => {
     create.mutate(
-      { repoUrl: repo.trim(), ...(projectName.trim() && { name: projectName.trim() }) },
+      {
+        repoUrl: repo.trim(),
+        ...(projectName.trim() && { name: projectName.trim() }),
+        ...(branch.trim() && { branch: branch.trim() }),
+      },
       {
         onSuccess: (created) => {
           onClose();
@@ -508,7 +515,7 @@ function ImportModal({
 
   return (
     <Modal title="Import a project" label="Import project" onClose={onClose}>
-      <p>Start with a repository or upload project files.</p>
+      <p>Import a GitHub repository. Struct reads its code and maps the architecture.</p>
       <label className="text-xs">
         Repository URL
         <input
@@ -517,6 +524,8 @@ function ImportModal({
           value={repo}
           onChange={(e) => {
             setRepo(e.target.value);
+            // A branch picked for one repository may not exist on the next.
+            setBranch("");
             create.reset();
           }}
         />
@@ -554,31 +563,15 @@ function ImportModal({
           }}
         />
       </label>
-      <div className="upload-zone">
-        <Upload size={25} />
-        <div className="text-xs mb-3">Choose source files from your codebase</div>
-        <input
-          ref={fileRef}
-          type="file"
-          multiple
-          accept=".ts,.tsx,.js,.jsx,.py,.json,.go,.java,.rs"
-          className="hidden"
-          onChange={(e) => {
-            const f = e.target.files?.[0];
-            if (f) {
-              setRepo(f.name.split(".")[0] ?? f.name);
-              onToast(`${e.target.files?.length} source file(s) selected`);
-            }
-          }}
-        />
-        <Button variant="outline" size="sm" onClick={() => fileRef.current?.click()}>
-          Choose files
-        </Button>
-      </div>
-      <p className="text-[10px]">
-        Projects are saved to your account. Diagrams use sample data until automated code analysis
-        is connected.
-      </p>
+      <BranchField
+        value={branch}
+        onChange={(b) => {
+          setBranch(b);
+          create.reset();
+        }}
+        branches={branches}
+        allowDefault
+      />
       {error && (
         <p className="text-xs text-destructive" role="alert">
           {error}

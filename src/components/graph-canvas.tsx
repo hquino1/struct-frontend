@@ -17,6 +17,8 @@ interface View {
   y: number;
 }
 
+const TONES = ["frontend", "service", "data", "external"] as const;
+
 const clamp = (scale: number) => Math.min(MAX_SCALE, Math.max(MIN_SCALE, scale));
 
 // Draws a laid-out graph that can be dragged, zoomed, and fitted to the canvas.
@@ -39,6 +41,7 @@ export function GraphCanvas({
   // Refit on resize until the user pans or zooms, then leave their view alone.
   const [fitted, setFitted] = useState(true);
   const [dragging, setDragging] = useState(false);
+  const [hovered, setHovered] = useState<string>();
   const drag = useRef<{ x: number; y: number; view: View } | null>(null);
 
   useEffect(() => {
@@ -158,30 +161,34 @@ export function GraphCanvas({
           viewBox={`0 0 ${layout.width} ${layout.height}`}
         >
           <defs>
-            <marker id="arrow" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
-              <path d="M0,0 L6,3 L0,6 Z" />
-            </marker>
-            <marker
-              id="arrow-highlight"
-              className="highlight"
-              markerWidth="6"
-              markerHeight="6"
-              refX="5"
-              refY="3"
-              orient="auto"
-            >
-              <path d="M0,0 L6,3 L0,6 Z" />
-            </marker>
+            {/* One arrowhead per edge colour: markers can't take the colour of their path. */}
+            {[...TONES, "highlight"].map((tone) => (
+              <marker
+                key={tone}
+                id={`arrow-${tone}`}
+                className={tone}
+                markerWidth="6"
+                markerHeight="6"
+                refX="5"
+                refY="3"
+                orient="auto"
+              >
+                <path d="M0,0 L6,3 L0,6 Z" />
+              </marker>
+            ))}
           </defs>
           {layout.edges.map((edge) => {
-            const highlight = edge.from === selected || edge.to === selected;
+            const highlight = [edge.from, edge.to].some((id) => id === selected || id === hovered);
             const dim = isDimmed(edge.from) && isDimmed(edge.to);
+            // Merged edges grow with what they carry, slowly, so a bundle of 30 stays a line.
+            const extra = Math.min(2.4, Math.log2(edge.weight) * 0.8);
             return (
               <g key={`${edge.from}->${edge.to}`} className={dim ? "dimmed" : ""}>
                 <path
-                  className={highlight ? "highlight" : ""}
+                  className={highlight ? "highlight" : edge.tone}
                   d={edge.path}
-                  markerEnd={`url(#${highlight ? "arrow-highlight" : "arrow"})`}
+                  style={extra ? { strokeWidth: (highlight ? 1.5 : 1.2) + extra } : undefined}
+                  markerEnd={`url(#arrow-${highlight ? "highlight" : edge.tone})`}
                 />
                 {(labelAll || highlight) && edge.label && (
                   <text x={edge.labelX} y={edge.labelY - 5} textAnchor="middle">
@@ -194,16 +201,28 @@ export function GraphCanvas({
         </svg>
         {layout.nodes.map(({ node, x, y }) => {
           const Icon = node.icon;
+          const props = {
+            variant: "ghost" as const,
+            className: `graph-node ${node.compact ? "compact" : ""} ${node.id === selected ? "chosen" : ""} ${isDimmed(node.id) ? "dimmed" : ""}`,
+            style: { left: x, top: y, height: node.height },
+            "aria-label": `Select ${node.name}`,
+            "aria-pressed": node.id === selected,
+            onClick: () => onSelect(node.id),
+            // Hovering a node lights up its edges without changing the selection.
+            onPointerEnter: () => setHovered(node.id),
+            onPointerLeave: () => setHovered((h) => (h === node.id ? undefined : h)),
+          };
+          if (node.compact)
+            return (
+              <Button key={node.id} {...props} title={`${node.name}\n${node.subtitle}`}>
+                <span className={`node-icon ${node.tone}`}>
+                  <Icon size={11} />
+                </span>
+                <span className="node-title truncate">{node.name}</span>
+              </Button>
+            );
           return (
-            <Button
-              key={node.id}
-              variant="ghost"
-              className={`graph-node ${node.id === selected ? "chosen" : ""} ${isDimmed(node.id) ? "dimmed" : ""}`}
-              style={{ left: x, top: y, height: node.height }}
-              aria-label={`Select ${node.name}`}
-              aria-pressed={node.id === selected}
-              onClick={() => onSelect(node.id)}
-            >
+            <Button key={node.id} {...props}>
               <div className="node-top">
                 <span className={`node-icon ${node.tone}`}>
                   <Icon size={15} />

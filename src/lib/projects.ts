@@ -1,5 +1,5 @@
 import { queryOptions, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import {
   connectGitHub,
   createProject,
@@ -8,7 +8,9 @@ import {
   getGitHubConnection,
   getGraph,
   getView,
+  listProjectBranches,
   listProjects,
+  listRepositoryBranches,
   startAnalysis,
   updateProject,
   type Analysis,
@@ -64,7 +66,7 @@ export function useDeleteProject() {
         list?.filter((p) => p.projectId !== projectId),
       );
       // Stops analysis polling and drops the project's cached graph and views.
-      for (const key of ["analysis", "graph", "view"]) {
+      for (const key of ["analysis", "graph", "view", "branches"]) {
         queryClient.removeQueries({ queryKey: [key, projectId] });
       }
       if (getLastProjectId() === projectId) clearLastProjectId();
@@ -90,6 +92,37 @@ export function useConnectGitHub() {
     onSuccess: (connection) => {
       queryClient.setQueryData<GitHubConnection>(githubConnectionQuery.queryKey, connection);
     },
+  });
+}
+
+// The same check the backend makes, so the import form only asks GitHub about a full URL.
+const GITHUB_REPO_URL = /^https:\/\/github\.com\/[A-Za-z0-9-]+\/[A-Za-z0-9._-]+?(?:\.git)?\/?$/;
+
+// Not retried: a failure is usually a missing or unreadable repository, which won't change.
+// `enabled` lets the branch menu wait until it's opened.
+export function useProjectBranches(projectId: string, enabled = true) {
+  return useQuery({
+    queryKey: ["branches", projectId],
+    queryFn: () => listProjectBranches(projectId),
+    enabled,
+    staleTime: 60_000,
+    retry: false,
+  });
+}
+
+// Waits for typing to pause, so each keystroke of the repository name isn't a GitHub lookup.
+export function useRepositoryBranches(repoUrl: string) {
+  const [settled, setSettled] = useState(repoUrl);
+  useEffect(() => {
+    const timer = setTimeout(() => setSettled(repoUrl), 400);
+    return () => clearTimeout(timer);
+  }, [repoUrl]);
+  return useQuery({
+    queryKey: ["github-branches", settled],
+    queryFn: () => listRepositoryBranches(settled),
+    enabled: settled === repoUrl && GITHUB_REPO_URL.test(settled),
+    staleTime: 60_000,
+    retry: false,
   });
 }
 

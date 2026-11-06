@@ -73,6 +73,24 @@ export function updateProject(projectId: string, input: UpdateProjectInput) {
   });
 }
 
+export interface RepositoryBranches {
+  defaultBranch: string;
+  // In GitHub's order (alphabetical).
+  branches: string[];
+  // The repository may have more branches than Struct lists.
+  truncated: boolean;
+}
+
+// The branches a project could switch to.
+export function listProjectBranches(projectId: string) {
+  return apiFetch<RepositoryBranches>(`/projects/${encodeURIComponent(projectId)}/branches`);
+}
+
+// The branches of a repository that isn't a project yet, for the import form.
+export function listRepositoryBranches(repoUrl: string) {
+  return apiFetch<RepositoryBranches>(`/github/branches?repoUrl=${encodeURIComponent(repoUrl)}`);
+}
+
 // Also deletes the project's saved graph and views.
 export async function deleteProject(projectId: string) {
   await apiFetch<void>(`/projects/${encodeURIComponent(projectId)}`, { method: "DELETE" });

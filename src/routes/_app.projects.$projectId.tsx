@@ -7,13 +7,11 @@ import {
   ArrowRight,
   Box,
   Check,
-  ChevronDown,
   ChevronRight,
   Code2,
   ExternalLink,
   FileCode2,
   FolderGit2,
-  GitBranch,
   GitFork,
   Loader2,
   Network,
@@ -26,6 +24,7 @@ import { Button } from "@/components/ui/button";
 import { Modal } from "@/components/modal";
 import { FieldKey } from "@/components/field-key";
 import { GraphCanvas } from "@/components/graph-canvas";
+import { BranchSwitcher } from "@/components/branch-switcher";
 import { ProjectActions } from "@/components/project-dialogs";
 import { useShell } from "@/hooks/use-shell";
 import {
@@ -33,6 +32,7 @@ import {
   layoutGraph,
   layoutView,
   nodeIcons,
+  simplifyView,
   typeLabels,
   viewMeta,
   views,
@@ -231,10 +231,7 @@ function PreAnalysis({ project, analysis }: { project: Project; analysis: Analys
           <FolderGit2 size={13} />
           {repoPath(project)}
         </a>
-        <span className="branch">
-          <GitBranch size={11} />
-          {project.branch}
-        </span>
+        <BranchSwitcher project={project} disabled={running} />
         <span className="ml-auto">
           <span className={`status-dot ${running ? "animate-pulse" : "idle"}`} />
           {running
@@ -557,11 +554,7 @@ function Workspace({ project, analysis }: { project: Project; analysis: Analysis
           <FolderGit2 size={13} />
           {repoPath(project)}
         </a>
-        <span className="branch">
-          <GitBranch size={11} />
-          {project.branch}
-          <ChevronDown size={10} />
-        </span>
+        <BranchSwitcher project={project} disabled={start.isPending} onAnalyze={analyze} />
         {analysis.commit && (
           <span className="font-mono text-[10px]" title={analysis.commit}>
             {analysis.commit.slice(0, 7)}
@@ -1000,7 +993,14 @@ function ExploreView({
   onBack: () => void;
   onOpenComponent: (id: string) => void;
 }) {
-  const data = result.data;
+  const [showOptional, setShowOptional] = useState(false);
+  // What's drawn: hub leaves folded into one node, leaves with the same callers merged.
+  // The caption still counts the full view.
+  const simplified = useMemo(
+    () => (result.data && meta ? simplifyView(result.data, meta, { showOptional }) : undefined),
+    [result.data, meta, showOptional],
+  );
+  const data = simplified;
   const layout = useMemo(
     () => (data && meta ? layoutView(data, meta, (id) => byId.get(id)?.name) : undefined),
     [data, meta, byId],
@@ -1092,8 +1092,14 @@ function ExploreView({
   const isDimmed = (id: string) => {
     if (focused && id !== focused && !linked.has(id)) return true;
     const n = nodesById.get(id);
-    return !!query && !!n && !`${n.name} ${n.detail}`.toLowerCase().includes(query.toLowerCase());
+    // Merged nodes match on what they stand for, too.
+    const text = `${n?.name} ${n?.detail} ${n?.fields?.map((f) => f.name).join(" ") ?? ""}`;
+    return !!query && !!n && !text.toLowerCase().includes(query.toLowerCase());
   };
+  const optional = meta.optional;
+  const optionalCount = optional
+    ? (result.data?.nodes.filter((n) => n.kind === optional.kind).length ?? 0)
+    : 0;
   // Picking the focused node again shows the whole view.
   const select = (id: string) => setSelectedId(meta.focus && id === selectedId ? undefined : id);
   return (
@@ -1108,7 +1114,18 @@ function ExploreView({
             <Network size={12} />
             {view}
             <span className="text-muted-foreground/50">/</span>
-            {meta.summary(data.nodes)}
+            {meta.summary(result.data?.nodes ?? data.nodes)}
+            {optional && optionalCount > 0 && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-5 px-1.5 text-[10px] text-muted-foreground"
+                aria-pressed={showOptional}
+                onClick={() => setShowOptional((v) => !v)}
+              >
+                {showOptional ? "Hide" : "Show"} {optionalCount} {optional.label}
+              </Button>
+            )}
           </>
         }
       />
@@ -1137,7 +1154,7 @@ function ViewDetailPanel({
   onOpenComponent,
 }: {
   node: ViewNode;
-  graph: ViewGraph;
+  graph: Pick<ViewGraph, "nodes" | "edges">;
   nodesById: Map<string, ViewNode>;
   meta: ViewMeta;
   component: GraphComponent | undefined;
@@ -1165,7 +1182,7 @@ function ViewDetailPanel({
         <>
           <div className="detail-divider" />
           <div className="flex justify-between text-[10px]">
-            <span>Fields</span>
+            <span>{meta.fieldsLabel ?? "Fields"}</span>
             <span className="text-muted-foreground">{node.fields.length}</span>
           </div>
           <ul className="detail-fields">

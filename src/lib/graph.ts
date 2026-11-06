@@ -13,8 +13,8 @@ import {
   Inbox,
   LayoutTemplate,
   KeyRound,
+  Layers,
   MonitorSmartphone,
-  MoreHorizontal,
   Package,
   Play,
   Rocket,
@@ -88,6 +88,18 @@ export interface ViewMeta {
   // Selecting a node fades everything it isn't directly connected to, so one screen's
   // slice of the system, or everything that depends on one endpoint, stands out.
   focus?: boolean;
+  // What a node's fields are, for the detail panel's list (default "Fields").
+  fieldsLabel?: string;
+  // Kinds drawn as one-line pills rather than cards: leaves that only need their name.
+  compact?: string[];
+  // Leaves of these kinds that sit in one lane and have exactly the same callers are drawn
+  // as one node listing them, so N parallel edges per caller become one.
+  merge?: { kinds: string[]; noun: string; callers: string };
+  // Leaves of these kinds that most callers use are listed on one node instead of being
+  // drawn to each caller: they connect to everything, so their edges say little.
+  common?: { kinds: string[]; name: string; kind: string };
+  // A kind left out until the viewer asks for it, e.g. dev packages.
+  optional?: { kind: string; label: string };
 }
 
 const count = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
@@ -99,6 +111,9 @@ export const viewMeta: Partial<Record<View, ViewMeta>> = {
     groupLabel: "Section",
     lanes: "groups",
     focus: true,
+    fieldsLabel: "Endpoints",
+    compact: ["endpoint", "missing", "remote"],
+    merge: { kinds: ["endpoint", "missing", "remote"], noun: "endpoint", callers: "screen" },
     empty:
       "No screens found. Struct reads Next.js and Expo Router pages, React Router and TanStack Router routes, and React Navigation screens, then follows each one to the API calls it makes.",
     kinds: {
@@ -119,17 +134,25 @@ export const viewMeta: Partial<Record<View, ViewMeta>> = {
     id: "dependencies",
     groupLabel: "Section",
     lanes: ["Components", "Packages"],
+    focus: true,
+    fieldsLabel: "Packages",
+    compact: ["package", "dev"],
+    merge: { kinds: ["package", "dev"], noun: "package", callers: "component" },
+    common: { kinds: ["package", "dev"], name: "Common packages", kind: "common" },
+    optional: { kind: "dev", label: "dev packages" },
     empty:
       "No packages or imports found. Struct reads JS/TS and Python imports, plus package.json, requirements.txt, pyproject.toml, go.mod, and Cargo.toml.",
     kinds: {
       component: { label: "Component", tone: "service", icon: Box },
       package: { label: "Package", tone: "data", icon: Package },
       dev: { label: "Dev package", tone: "external", icon: Wrench },
-      more: { label: "More", tone: "frontend", icon: MoreHorizontal },
+      common: { label: "Used by most components", tone: "data", icon: Layers },
     },
+    // Packages only one component uses are listed on its card rather than drawn.
     summary: (nodes) => {
-      const components = nodes.filter((n) => n.kind === "component").length;
-      return `${count(components, "component")} · ${count(nodes.length - components, "package")}`;
+      const components = nodes.filter((n) => n.kind === "component");
+      const listed = components.reduce((sum, n) => sum + (n.fields?.length ?? 0), 0);
+      return `${count(components.length, "component")} · ${count(nodes.length - components.length + listed, "package")}`;
     },
   },
   "Function calls": {
@@ -169,6 +192,9 @@ export const viewMeta: Partial<Record<View, ViewMeta>> = {
     id: "api",
     groupLabel: "Section",
     lanes: ["Callers"],
+    fieldsLabel: "Endpoints",
+    compact: ["endpoint", "missing", "remote"],
+    merge: { kinds: ["endpoint", "missing", "remote"], noun: "endpoint", callers: "caller" },
     empty:
       "No HTTP routes or calls found. Struct reads NestJS, Express-style servers, Next.js, FastAPI, Flask, Django, Spring, Go, and OpenAPI specs, and calls made with fetch, axios, or API client wrappers.",
     kinds: {
@@ -225,6 +251,168 @@ export const viewMeta: Partial<Record<View, ViewMeta>> = {
 const fallbackKind: NodeKind = { label: "Node", tone: "service", icon: Box };
 export const kindOf = (meta: ViewMeta, kind: string) => meta.kinds[kind] ?? fallbackKind;
 
+// An edge as drawn; `weight` is how many edges it stands for once leaves are merged.
+export interface ViewLink {
+  from: string;
+  to: string;
+  label: string;
+  weight?: number;
+}
+
+export interface SimplifiedView {
+  nodes: ViewNode[];
+  edges: ViewLink[];
+  // How many nodes of the meta's optional kind were left out.
+  hidden: number;
+}
+
+// A leaf counts as common once this share of the callers use it, given enough callers.
+const COMMON_SHARE = 0.6;
+const MIN_COMMON_CALLERS = 4;
+const MIN_COMMON_NODES = 2;
+
+// "/api/users/:id" and "/api/users" → "/api/users/*"; "@radix-ui/react-tabs" and
+// "@radix-ui/react-slot" → "@radix-ui/*". Methods in front of paths are ignored.
+function sharedPrefix(names: string[]) {
+  const paths = names.map((n) => n.split(" ").pop() ?? n);
+  // GET and PATCH on one path are just that path.
+  if (paths.every((p) => p === paths[0]) && paths[0]!.length > 1) return paths[0];
+  const parts = paths.map((p) => p.split("/"));
+  const prefix: string[] = [];
+  for (let i = 0; parts.every((p) => i < p.length - 1 && p[i] === parts[0]![i]); i++)
+    prefix.push(parts[0]![i]!);
+  const joined = prefix.join("/");
+  return joined.replace(/^\//, "").length > 0 ? `${joined}/*` : undefined;
+}
+
+// A member's detail without the "used by …" note, which the merged node already says.
+const memberType = (n: ViewNode) =>
+  n.detail
+    .split(" · ")
+    .filter((part) => part && !part.startsWith("used by"))
+    .join(" · ");
+
+// Reduces an explore view to what's worth drawing, the way its meta says: leaves out the
+// optional kind, lists leaves that nearly every caller uses on one node without edges, and
+// merges leaves with identical callers into one node. Every node it builds lists what it
+// stands for in `fields`, so the card and the detail panel still name each one.
+export function simplifyView(
+  graph: Pick<ViewGraph, "nodes" | "edges">,
+  meta: ViewMeta,
+  { showOptional = false }: { showOptional?: boolean } = {},
+): SimplifiedView {
+  let nodes = graph.nodes;
+  let edges: ViewLink[] = graph.edges;
+  let hidden = 0;
+
+  if (meta.optional && !showOptional) {
+    const left = new Set(nodes.filter((n) => n.kind === meta.optional!.kind).map((n) => n.id));
+    hidden = left.size;
+    nodes = nodes.filter((n) => !left.has(n.id));
+    edges = edges.filter((e) => !left.has(e.from) && !left.has(e.to));
+  }
+
+  const callersOf = () => {
+    const callers = new Map<string, Set<string>>();
+    for (const e of edges) callers.set(e.to, (callers.get(e.to) ?? new Set()).add(e.from));
+    return callers;
+  };
+  const sources = new Set(edges.map((e) => e.from));
+  // Only leaves merge: a node with edges of its own would lose them.
+  const isLeaf = (n: ViewNode, kinds: string[]) => kinds.includes(n.kind) && !sources.has(n.id);
+
+  if (meta.common) {
+    const { kinds, name, kind } = meta.common;
+    const callers = callersOf();
+    const leaves = nodes.filter((n) => isLeaf(n, kinds));
+    const users = new Set(leaves.flatMap((n) => [...(callers.get(n.id) ?? [])]));
+    const threshold = Math.ceil(users.size * COMMON_SHARE);
+    const common =
+      users.size >= MIN_COMMON_CALLERS
+        ? leaves.filter((n) => (callers.get(n.id)?.size ?? 0) >= threshold)
+        : [];
+    if (common.length >= MIN_COMMON_NODES) {
+      const ids = new Set(common.map((n) => n.id));
+      const node: ViewNode = {
+        id: `common:${common[0]!.group}`,
+        name,
+        kind,
+        detail: `${count(common.length, meta.merge?.noun ?? "node")} that at least ${threshold} of the ${count(users.size, meta.merge?.callers ?? "caller")} use, listed here rather than drawn to each one`,
+        group: common[0]!.group,
+        fields: common
+          .map((n) => ({ n, users: callers.get(n.id)!.size }))
+          .sort((a, b) => b.users - a.users || a.n.name.localeCompare(b.n.name))
+          .map(({ n, users: u }) => ({ name: n.name, type: `${u} of ${users.size}` })),
+      };
+      nodes = nodes.flatMap((n) => (n.id === common[0]!.id ? [node] : ids.has(n.id) ? [] : [n]));
+      edges = edges.filter((e) => !ids.has(e.to));
+    }
+  }
+
+  if (meta.merge) {
+    const { kinds, noun, callers: callerNoun } = meta.merge;
+    const callers = callersOf();
+    const sets = new Map<string, ViewNode[]>();
+    for (const n of nodes) {
+      const by = callers.get(n.id);
+      if (!by || !isLeaf(n, kinds)) continue;
+      const key = [n.group, n.kind, ...[...by].sort()].join("\n");
+      sets.set(key, [...(sets.get(key) ?? []), n]);
+    }
+    const mergedInto = new Map<string, ViewNode>();
+    for (const members of sets.values()) {
+      if (members.length < 2) continue;
+      const first = members[0]!;
+      const by = callers.get(first.id)!.size;
+      const node: ViewNode = {
+        id: `merged:${first.id}`,
+        name: sharedPrefix(members.map((m) => m.name)) ?? count(members.length, noun),
+        kind: first.kind,
+        detail: `${count(members.length, noun)}, all used by the same ${by === 1 ? callerNoun : count(by, callerNoun)}`,
+        group: first.group,
+        ...(first.componentId && members.every((m) => m.componentId === first.componentId)
+          ? { componentId: first.componentId }
+          : {}),
+        fields: members.map((m) => ({ name: m.name, type: memberType(m) })),
+      };
+      for (const m of members) mergedInto.set(m.id, node);
+    }
+    if (mergedInto.size) {
+      // The merged node takes its first member's place, so lane order holds.
+      nodes = nodes.flatMap((n) => {
+        const into = mergedInto.get(n.id);
+        return !into ? [n] : into.id === `merged:${n.id}` ? [into] : [];
+      });
+      const links = new Map<string, ViewLink & { weight: number; labels: Set<string> }>();
+      for (const e of edges) {
+        const to = mergedInto.get(e.to)?.id ?? e.to;
+        const key = `${e.from}->${to}`;
+        const link = links.get(key) ?? {
+          from: e.from,
+          to,
+          label: "",
+          weight: 0,
+          labels: new Set(),
+        };
+        link.weight += e.weight ?? 1;
+        if (e.label) link.labels.add(e.label);
+        links.set(key, link);
+      }
+      edges = [...links.values()].map(({ labels, weight, ...e }) => ({
+        ...e,
+        // One shared label says how the calls happen; mixed ones just count them.
+        label:
+          weight === 1 || (labels.size === 1 && !/^×\d/.test([...labels][0]!))
+            ? ([...labels][0] ?? "")
+            : count(weight, noun),
+        weight,
+      }));
+    }
+  }
+
+  return { nodes, edges, hidden };
+}
+
 // What the canvas draws for one node, whatever graph it comes from.
 export interface CanvasNode {
   id: string;
@@ -236,11 +424,14 @@ export interface CanvasNode {
   footRight: string;
   // Rows listed on the card, e.g. a table's columns; such cards grow to fit them.
   fields?: ViewField[];
+  // Drawn as a one-line pill: a leaf that only needs its name.
+  compact?: boolean;
   height: number;
 }
 
 export const NODE_WIDTH = 176;
 export const NODE_HEIGHT = 91;
+export const PILL_HEIGHT = 30;
 export const MAX_CARD_FIELDS = 10;
 export const FIELD_ROW = 15;
 const CARD_HEADER = 62;
@@ -261,6 +452,9 @@ const BAND_GAP = 44; // between the bands of a flow
 const PADDING = 40;
 const LABEL_SPACE = 34; // above the first row, for the lane label
 const MAX_ROWS = 5;
+// Lanes of pills only: short rows, so they stack tighter and wrap much later.
+const PILL_ROW_GAP = 10;
+const MAX_PILL_ROWS = 14;
 
 // Left to right: clients call services, services reach data stores and third parties.
 const lanes: { label: string; types: ComponentType[] }[] = [
@@ -279,6 +473,10 @@ export interface PlacedEdge {
   from: string;
   to: string;
   label: string;
+  // The target's colour, so a lane's incoming edges read as one family.
+  tone: ComponentType;
+  // How many edges this one stands for; drawn thicker the more it carries.
+  weight: number;
   path: string;
   // Where the label sits: the curve's midpoint.
   labelX: number;
@@ -323,10 +521,7 @@ export function layoutGraph(graph: Pick<ArchitectureGraph, "components" | "conne
 
 // Places nodes in labelled columns, wrapping a long column into a block of several, and
 // orders each block by where its neighbours sit so edges cross less.
-function layoutLanes(
-  laneList: { label: string; nodes: CanvasNode[] }[],
-  links: { from: string; to: string; label: string }[],
-) {
+function layoutLanes(laneList: { label: string; nodes: CanvasNode[] }[], links: ViewLink[]) {
   const neighbours = new Map<string, string[]>();
   for (const { from, to } of links) {
     neighbours.set(from, [...(neighbours.get(from) ?? []), to]);
@@ -339,9 +534,14 @@ function layoutLanes(
   // Row-major placement keeps list order top to bottom, so ordering a lane orders its rows.
   // Large lanes grow towards a square rather than one very wide strip.
   const shape = groups.map(({ nodes }) => {
-    const maxRows = Math.max(MAX_ROWS, Math.ceil(Math.sqrt(nodes.length)));
+    const pills = nodes.every((n) => n.compact);
+    const maxRows = Math.max(pills ? MAX_PILL_ROWS : MAX_ROWS, Math.ceil(Math.sqrt(nodes.length)));
     const columns = Math.ceil(nodes.length / maxRows);
-    return { columns, rows: Math.ceil(nodes.length / columns) };
+    return {
+      columns,
+      rows: Math.ceil(nodes.length / columns),
+      gap: pills ? PILL_ROW_GAP : ROW_GAP,
+    };
   });
   // Barycentre sweeps: each node's relative height is where it sits in its lane.
   const relativeY = new Map<string, number>();
@@ -371,7 +571,7 @@ function layoutLanes(
     );
   });
   const laneHeights = rowHeights.map(
-    (rows) => rows.reduce((a, b) => a + b, 0) + (rows.length - 1) * ROW_GAP,
+    (rows, l) => rows.reduce((a, b) => a + b, 0) + (rows.length - 1) * shape[l]!.gap,
   );
   const height = Math.max(...laneHeights, 0) + PADDING * 2 + LABEL_SPACE;
 
@@ -379,10 +579,10 @@ function layoutLanes(
   const laneLabels: GraphLayout["lanes"] = [];
   let x = PADDING;
   groups.forEach(({ label, nodes }, l) => {
-    const { columns, rows } = shape[l]!;
+    const { columns, rows, gap } = shape[l]!;
     const top = PADDING + LABEL_SPACE + (height - PADDING * 2 - LABEL_SPACE - laneHeights[l]!) / 2;
     const rowTops = rowHeights[l]!.map(
-      (_, r) => top + rowHeights[l]!.slice(0, r).reduce((a, b) => a + b, 0) + r * ROW_GAP,
+      (_, r) => top + rowHeights[l]!.slice(0, r).reduce((a, b) => a + b, 0) + r * gap,
     );
     laneLabels.push({ label, x: x + 6, y: PADDING });
     nodes.forEach((node, i) => {
@@ -416,6 +616,7 @@ const viewNode =
   (meta: ViewMeta, componentName: (id: string) => string | undefined) =>
   (n: ViewNode): CanvasNode => {
     const kind = kindOf(meta, n.kind);
+    const compact = !n.fields && !!meta.compact?.includes(n.kind);
     return {
       id: n.id,
       name: n.name,
@@ -425,13 +626,14 @@ const viewNode =
       footLeft: (n.componentId && componentName(n.componentId)) || n.path?.split("/").pop() || "",
       footRight: kind.label,
       ...(n.fields && { fields: n.fields }),
-      height: cardHeight(n.fields),
+      ...(compact && { compact }),
+      height: compact ? PILL_HEIGHT : cardHeight(n.fields),
     };
   };
 
 // Lays out an explore view the way its meta says: columns per group, or a flow.
 export function layoutView(
-  graph: Pick<ViewGraph, "nodes" | "edges">,
+  graph: { nodes: ViewNode[]; edges: ViewLink[] },
   meta: ViewMeta,
   componentName: (id: string) => string | undefined,
 ) {
@@ -529,7 +731,7 @@ export function layoutFlow(
   } satisfies GraphLayout;
 }
 
-function routeEdges(placed: PlacedNode[], links: { from: string; to: string; label: string }[]) {
+function routeEdges(placed: PlacedNode[], links: ViewLink[]) {
   const at = new Map(placed.map((p) => [p.node.id, p]));
   const pairs = new Set(links.map((c) => `${c.from}->${c.to}`));
   return links.flatMap((c): PlacedEdge[] => {
@@ -538,7 +740,16 @@ function routeEdges(placed: PlacedNode[], links: { from: string; to: string; lab
     if (!a || !b) return [];
     // Links in both directions would draw on top of each other, so nudge them apart.
     const nudge = pairs.has(`${c.to}->${c.from}`) ? (c.from < c.to ? -9 : 9) : 0;
-    return [{ from: c.from, to: c.to, label: c.label, ...route(a, b, nudge) }];
+    return [
+      {
+        from: c.from,
+        to: c.to,
+        label: c.label,
+        tone: b.node.tone,
+        weight: c.weight ?? 1,
+        ...route(a, b, nudge),
+      },
+    ];
   });
 }
 

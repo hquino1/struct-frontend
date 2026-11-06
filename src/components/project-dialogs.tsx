@@ -1,11 +1,12 @@
 import { useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import { Pencil, Trash2 } from "lucide-react";
+import { BranchField } from "@/components/branch-field";
 import { Button } from "@/components/ui/button";
 import { Modal } from "@/components/modal";
 import { useShell } from "@/hooks/use-shell";
 import type { Project } from "@/lib/api";
-import { repoPath, useDeleteProject, useUpdateProject } from "@/lib/projects";
+import { repoPath, useDeleteProject, useProjectBranches, useUpdateProject } from "@/lib/projects";
 
 // Edit and delete buttons for a project's page heading.
 export function ProjectActions({ project }: { project: Project }) {
@@ -52,6 +53,7 @@ export function EditProjectModal({ project, onClose }: { project: Project; onClo
   const [branch, setBranch] = useState(project.branch);
   const { showToast } = useShell();
   const update = useUpdateProject(project.projectId);
+  const branches = useProjectBranches(project.projectId);
   const error = update.error instanceof Error ? update.error.message : "";
   // Only send what changed, so an unchanged form is a no-op.
   const changes = {
@@ -90,18 +92,14 @@ export function EditProjectModal({ project, onClose }: { project: Project; onClo
           }}
         />
       </label>
-      <label className="text-xs">
-        Branch
-        <input
-          type="text"
-          maxLength={255}
-          value={branch}
-          onChange={(e) => {
-            setBranch(e.target.value);
-            update.reset();
-          }}
-        />
-      </label>
+      <BranchField
+        value={branch}
+        onChange={(b) => {
+          setBranch(b);
+          update.reset();
+        }}
+        branches={branches}
+      />
       {changes.branch && (
         <p className="text-[10px]">
           The current map stays until you run a new analysis on this branch.
