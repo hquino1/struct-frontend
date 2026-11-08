@@ -1,5 +1,6 @@
 import {
   AppWindow,
+  ArrowRight,
   Box,
   Braces,
   CircleAlert,
@@ -9,12 +10,14 @@ import {
   Container,
   Database,
   FileJson,
+  GitFork,
   Globe,
   Inbox,
   LayoutTemplate,
   KeyRound,
   Layers,
   MonitorSmartphone,
+  Network,
   Package,
   Play,
   Rocket,
@@ -56,6 +59,17 @@ export const views: View[] = [
   "Cloud infrastructure",
   "CI/CD workflows",
 ];
+
+export const viewIcons: Record<View, LucideIcon> = {
+  "System architecture": Network,
+  "Screen flows": AppWindow,
+  Dependencies: GitFork,
+  "Function calls": Braces,
+  "Database schema": Database,
+  "API interactions": ArrowRight,
+  "Cloud infrastructure": Globe,
+  "CI/CD workflows": Workflow,
+};
 
 export const nodeIcons = { frontend: Globe, service: Box, data: Database, external: Zap };
 

@@ -7,7 +7,6 @@ import {
   Database,
   Eye,
   EyeOff,
-  Github,
   Globe,
   KeyRound,
   Lock,
@@ -250,22 +249,6 @@ function Login() {
           )}
           <h1>{copy[mode].title}</h1>
           <p className="login-sub">{copy[mode].sub}</p>
-          {(mode === "signin" || mode === "signup") && (
-            <>
-              <Button
-                variant="outline"
-                className="w-full"
-                type="button"
-                onClick={() => setError("GitHub sign-in is not connected yet.")}
-              >
-                <Github />
-                Continue with GitHub
-              </Button>
-              <div className="login-divider">
-                <span>or continue with email</span>
-              </div>
-            </>
-          )}
           <form onSubmit={submit} noValidate>
             {(mode === "signin" || mode === "signup" || mode === "forgot") && (
               <>

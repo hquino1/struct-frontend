@@ -5,20 +5,28 @@ import {
   ArrowDownToLine,
   ArrowLeft,
   ArrowRight,
+  BookOpen,
   Box,
   Check,
+  ChevronDown,
   ChevronRight,
+  CircleQuestionMark,
+  Cloud,
   Code2,
+  Database,
   ExternalLink,
   FileCode2,
   FolderGit2,
   GitFork,
   Loader2,
+  MessageCircleQuestionMark,
   Network,
+  Plug,
   Settings2,
   ShieldCheck,
   Sparkles,
   TriangleAlert,
+  type LucideIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Modal } from "@/components/modal";
@@ -34,6 +42,7 @@ import {
   nodeIcons,
   simplifyView,
   typeLabels,
+  viewIcons,
   viewMeta,
   views,
   type View,
@@ -44,6 +53,8 @@ import {
   type Analysis,
   type ArchitectureGraph,
   type ComponentType,
+  type FaqEntry,
+  type FaqTopic,
   type GraphComponent,
   type Project,
   type ViewGraph,
@@ -60,7 +71,7 @@ import {
   useView,
 } from "@/lib/projects";
 
-const tabs = ["Graph", "Files", "Insights"] as const;
+const tabs = ["Graphs", "Documentation"] as const;
 type Tab = (typeof tabs)[number];
 
 export const Route = createFileRoute("/_app/projects/$projectId")({
@@ -173,7 +184,7 @@ const analysisSteps = [
   { label: "Detect stack", detail: "Languages, frameworks, and package managers" },
   { label: "Map components", detail: "Services, apps, data stores, and integrations" },
   { label: "Trace dependencies", detail: "Imports, API calls, and data access" },
-  { label: "Generate insights", detail: "Structure, coupling, and risks" },
+  { label: "Answer key questions", detail: "Structure, critical endpoints, and risks" },
 ];
 
 const analysisOutputs = [
@@ -188,9 +199,9 @@ const analysisOutputs = [
     text: "Switch between dependencies, function calls, database schema, APIs, cloud, and CI/CD.",
   },
   {
-    icon: Sparkles,
-    title: "Architecture insights",
-    text: "Spot circular dependencies, central bottlenecks, and boundaries worth keeping.",
+    icon: MessageCircleQuestionMark,
+    title: "Answers to key questions",
+    text: "How it's structured, which endpoints matter most, and what to watch out for, linked to the code.",
   },
 ];
 
@@ -385,10 +396,12 @@ const githubUrl = (project: Project, analysis: Analysis, path: string, kind: "bl
     .join("/")}`;
 
 function Workspace({ project, analysis }: { project: Project; analysis: Analysis }) {
-  const { view = "System architecture", tab = "Graph" } = Route.useSearch();
+  const { view = "System architecture", tab = "Graphs" } = Route.useSearch();
   const navigate = useNavigate({ from: Route.fullPath });
-  const setView = (v: View) => void navigate({ search: { view: v } });
-  const setTab = (t: Tab) => void navigate({ search: (prev) => ({ ...prev, tab: t }) });
+  // Switching graphs or sections only swaps the panel, so keep the scroll position.
+  const setView = (v: View) => void navigate({ search: { view: v }, resetScroll: false });
+  const setTab = (t: Tab) =>
+    void navigate({ search: (prev) => ({ ...prev, tab: t }), resetScroll: false });
   const { query, showToast } = useShell();
   // Starting a run replaces this page with the progress view until it completes.
   const start = useStartAnalysis(project.projectId);
@@ -410,10 +423,15 @@ function Workspace({ project, analysis }: { project: Project; analysis: Analysis
   const [modal, setModal] = useState<"filter" | null>(null);
   const [filter, setFilter] = useState<Filter>("All components");
   const closeModal = () => setModal(null);
+  const graphRef = useRef<HTMLElement>(null);
+  // Selects a component on the architecture map and brings the map into view.
   const inspect = (id: string) => {
     setSelectedId(id);
-    setTab("Graph");
+    void navigate({ search: {}, resetScroll: false });
+    graphRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
+  const sourceUrl = (path: string, kind: "blob" | "tree") =>
+    githubUrl(project, analysis, path, kind);
   const analyze = () =>
     start.mutate(undefined, {
       onError: (err) => showToast(err.message),
@@ -433,9 +451,8 @@ function Workspace({ project, analysis }: { project: Project; analysis: Analysis
 
   const components = graph?.components ?? [];
   const connections = graph?.connections ?? [];
-  const insights = graph?.insights ?? [];
+  const faq = graph?.faq;
   const externalLinks = connections.filter((c) => byId.get(c.to)?.type === "external").length;
-  const attention = insights.filter((i) => i.kind === "Attention").length;
   const pending = graphStatus === "pending" ? "…" : "—";
   const stats = [
     {
@@ -465,26 +482,28 @@ function Workspace({ project, analysis }: { project: Project; analysis: Analysis
       icon: GitFork,
     },
     {
-      label: "Insights",
-      value: graph ? String(insights.length) : pending,
-      foot: graph
-        ? attention
-          ? `${attention} ${attention === 1 ? "needs" : "need"} attention`
-          : "Nothing flagged"
-        : "Loading map...",
-      icon: Sparkles,
+      label: "Questions answered",
+      value: faq ? String(faq.length) : pending,
+      foot: !graph
+        ? "Loading map..."
+        : !faq
+          ? "Re-analyze to answer"
+          : faq.some((e) => e.topic === "risks")
+            ? "Including risks to watch"
+            : "From this commit",
+      icon: MessageCircleQuestionMark,
     },
   ];
 
   const exportGraph = () => {
     if (!graph) return;
-    const { components, connections, insights } = graph;
+    const { components, connections, faq } = graph;
     const source = { project: project.name, repository: project.repoUrl, commit: analysis.commit };
     // An open explore view exports itself; otherwise the architecture map.
     const content = JSON.stringify(
       viewQuery.data
         ? { ...source, view, nodes: viewQuery.data.nodes, edges: viewQuery.data.edges }
-        : { ...source, components, connections, insights },
+        : { ...source, components, connections, faq },
       null,
       2,
     );
@@ -497,7 +516,7 @@ function Workspace({ project, analysis }: { project: Project; analysis: Analysis
     showToast(`${viewQuery.data ? view : "Architecture"} exported as JSON`);
   };
 
-  // Shown in place of the graph, files, or insights while the map can't be drawn.
+  // Shown in place of the graph or files while the map can't be drawn.
   const blocked =
     graphStatus === "pending" ? (
       <CanvasMessage icon={<Loader2 size={17} className="animate-spin" />}>
@@ -533,7 +552,8 @@ function Workspace({ project, analysis }: { project: Project; analysis: Analysis
             <span className="pill">Analyzed</span>
           </div>
           <p>
-            Project overview <span className="mx-2">/</span> {view}
+            Project overview <span className="mx-2">/</span>{" "}
+            {tab === "Documentation" ? "Documentation" : view}
           </p>
         </div>
         <div className="heading-actions">
@@ -580,29 +600,38 @@ function Workspace({ project, analysis }: { project: Project; analysis: Analysis
           </div>
         ))}
       </div>
-      <section className="graph-section" aria-label="Architecture visualization">
+      {graph && (
+        <Faq
+          key={analysis.analysisId}
+          faq={faq}
+          byId={byId}
+          sourceUrl={sourceUrl}
+          onInspect={inspect}
+          analyzing={start.isPending}
+          onAnalyze={analyze}
+        />
+      )}
+      <section
+        ref={graphRef}
+        className="graph-section"
+        aria-label="Project graphs and documentation"
+      >
         <div className="graph-toolbar">
-          <div className="graph-tabs">
+          <div className="graph-tabs" role="tablist">
             {tabs.map((t) => (
               <Button
                 key={t}
                 variant="ghost"
+                role="tab"
+                aria-selected={tab === t}
                 className={`graph-tab ${tab === t ? "selected" : ""}`}
                 onClick={() => setTab(t)}
               >
-                {t === "Graph" ? (
-                  <Network size={13} />
-                ) : t === "Files" ? (
-                  <FileCode2 size={13} />
-                ) : (
-                  <Sparkles size={13} />
-                )}{" "}
-                {t}
-                {t === "Insights" && graph && <span className="key">{insights.length}</span>}
+                {t === "Graphs" ? <Network size={13} /> : <BookOpen size={13} />} {t}
               </Button>
             ))}
           </div>
-          <div className="flex items-center gap-2">
+          <div className={`flex items-center gap-2 ${tab === "Graphs" ? "" : "invisible"}`}>
             <Button
               variant="ghost"
               size="icon"
@@ -624,8 +653,9 @@ function Workspace({ project, analysis }: { project: Project; analysis: Analysis
             </Button>
           </div>
         </div>
+        {tab === "Graphs" && <ViewSwitcher view={view} analysis={analysis} onChange={setView} />}
         {blocked ??
-          (tab === "Graph" ? (
+          (tab === "Graphs" ? (
             view !== "System architecture" ? (
               <ExploreView
                 key={view}
@@ -674,14 +704,17 @@ function Workspace({ project, analysis }: { project: Project; analysis: Analysis
                 </div>
               )
             )
-          ) : tab === "Files" ? (
+          ) : (
             <div className="insights-expanded">
-              <div className="flex items-center justify-between mb-6">
-                <h2 className="text-sm font-semibold">Project files</h2>
+              <div className="flex items-center justify-between gap-4 mb-1">
+                <h2 className="text-sm font-semibold">Key files</h2>
                 <span className="text-muted-foreground text-xs">
                   {plural(components.filter((c) => c.entryPoint).length, "component entry point")}
                 </span>
               </div>
+              <p className="text-muted-foreground text-[11px] mb-6">
+                The file to open first for each component. Select one to see it on the map.
+              </p>
               {components
                 .filter((c) => c.entryPoint)
                 .filter((c) =>
@@ -708,14 +741,9 @@ function Workspace({ project, analysis }: { project: Project; analysis: Analysis
                   </Button>
                 ))}
             </div>
-          ) : (
-            <div className="insights-expanded">
-              <h2 className="text-sm font-semibold mb-5">Architecture insights</h2>
-              <Insights insights={insights} byId={byId} onInspect={inspect} />
-            </div>
           ))}
         <div className="legend">
-          {(meta && tab === "Graph"
+          {(meta && tab === "Graphs"
             ? Object.values(meta.kinds).map((k) => [k.tone, k.label] as const)
             : (["frontend", "service", "data", "external"] as const).map(
                 (type) => [type, type === "frontend" ? "Frontend" : typeLabels[type]] as const,
@@ -726,32 +754,13 @@ function Workspace({ project, analysis }: { project: Project; analysis: Analysis
               {label}
             </span>
           ))}
-          <span className="ml-auto hidden sm:block font-mono">
-            Drag to pan · Ctrl + scroll to zoom
-          </span>
+          {tab === "Graphs" && (
+            <span className="ml-auto hidden sm:block font-mono">
+              Drag to pan · Ctrl + scroll to zoom
+            </span>
+          )}
         </div>
       </section>
-      {insights.length > 0 && (
-        <>
-          <div className="insights-heading">
-            <h2>
-              <Sparkles size={14} className="text-primary" />
-              Architecture insights
-              <span className="pill">{plural(insights.length, "insight")}</span>
-            </h2>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="text-[10px] text-muted-foreground"
-              onClick={() => setTab("Insights")}
-            >
-              View all
-              <ArrowRight size={12} />
-            </Button>
-          </div>
-          <Insights insights={insights.slice(0, 3)} byId={byId} onInspect={inspect} />
-        </>
-      )}
       <footer className="footer">
         <span className="flex items-center gap-1.5">
           <ShieldCheck size={11} />
@@ -917,54 +926,228 @@ function DetailPanel({
   );
 }
 
-const insightStyles = {
-  Architecture: { icon: Network, color: "text-blue" },
-  Attention: { icon: TriangleAlert, color: "text-amber" },
-  "Best practice": { icon: ShieldCheck, color: "text-primary" },
-} as const;
-
-function Insights({
-  insights,
-  byId,
-  onInspect,
+// Picks which graph the Graphs section shows. Views this run didn't build stay selectable,
+// so their page can say why, but are dimmed.
+function ViewSwitcher({
+  view,
+  analysis,
+  onChange,
 }: {
-  insights: ArchitectureGraph["insights"];
-  byId: Map<string, GraphComponent>;
-  onInspect: (id: string) => void;
+  view: View;
+  analysis: Analysis;
+  onChange: (view: View) => void;
 }) {
+  const unbuilt = (v: View) => {
+    const id = viewMeta[v]?.id;
+    const status = id && analysis.views?.[id];
+    return status === "NOT_APPLICABLE"
+      ? "Nothing to show in this repository"
+      : status === "FAILED"
+        ? "Couldn't be built in the last analysis"
+        : undefined;
+  };
   return (
-    <div className="insights-grid">
-      {insights.map((s) => {
-        const { icon: Icon, color } = insightStyles[s.kind];
-        const involved = s.componentIds.flatMap((id) => byId.get(id) ?? []);
+    <div className="view-bar" role="tablist" aria-label="Graphs">
+      {views.map((v) => {
+        const Icon = viewIcons[v];
+        const reason = unbuilt(v);
         return (
-          <div className="insight" key={s.title}>
-            <div className="insight-top">
-              <Icon size={16} className={color} />
-              <span className="insight-tag">{s.kind}</span>
-            </div>
-            <h3>{s.title}</h3>
-            <p>{s.text}</p>
-            {involved.length > 0 && (
-              <div className="flex flex-wrap gap-x-3 mt-2">
-                {involved.slice(0, 3).map((c) => (
-                  <Button
-                    key={c.id}
-                    variant="link"
-                    className={`p-0 h-5 text-[10px] ${color}`}
-                    onClick={() => onInspect(c.id)}
-                  >
-                    {c.name}
-                    <ArrowRight size={11} />
-                  </Button>
-                ))}
-              </div>
-            )}
-          </div>
+          <Button
+            key={v}
+            variant="ghost"
+            role="tab"
+            aria-selected={view === v}
+            title={reason ?? v}
+            className={`view-chip ${view === v ? "selected" : ""} ${reason ? "unbuilt" : ""}`}
+            onClick={() => onChange(v)}
+          >
+            <Icon size={12} />
+            {v}
+          </Button>
         );
       })}
     </div>
   );
+}
+
+const faqStyles: Record<FaqTopic, { icon: LucideIcon; color: string }> = {
+  overview: { icon: Network, color: "text-primary" },
+  connections: { icon: GitFork, color: "text-blue" },
+  endpoints: { icon: Plug, color: "text-blue" },
+  data: { icon: Database, color: "text-amber" },
+  deployment: { icon: Cloud, color: "text-violet" },
+  risks: { icon: TriangleAlert, color: "text-amber" },
+  onboarding: { icon: BookOpen, color: "text-primary" },
+  other: { icon: CircleQuestionMark, color: "text-muted-foreground" },
+};
+
+// Questions shown before "Show all", so the map stays near the top of the page.
+const FAQ_PREVIEW = 4;
+
+// Answers to the questions a newcomer asks first, written by the analysis.
+function Faq({
+  faq,
+  byId,
+  sourceUrl,
+  onInspect,
+  analyzing,
+  onAnalyze,
+}: {
+  faq: FaqEntry[] | undefined;
+  byId: Map<string, GraphComponent>;
+  sourceUrl: (path: string, kind: "blob" | "tree") => string;
+  onInspect: (id: string) => void;
+  analyzing: boolean;
+  onAnalyze: () => void;
+}) {
+  const [open, setOpen] = useState(() => new Set([0]));
+  const [showAll, setShowAll] = useState(false);
+  const toggle = (i: number) =>
+    setOpen((prev) => {
+      const next = new Set(prev);
+      if (!next.delete(i)) next.add(i);
+      return next;
+    });
+  const heading = (
+    <div className="faq-header">
+      <h2>
+        <MessageCircleQuestionMark size={14} className="text-primary" />
+        Key questions
+        {faq && <span className="pill">{plural(faq.length, "answer")}</span>}
+      </h2>
+    </div>
+  );
+
+  // Runs from before the FAQ existed saved none.
+  if (!faq)
+    return (
+      <section className="faq" aria-label="Key questions">
+        {heading}
+        <div className="faq-empty">
+          <p>
+            Re-analyze to see how this system is structured, which endpoints matter most, and what
+            to watch out for.
+          </p>
+          <Button size="sm" variant="outline" disabled={analyzing} onClick={onAnalyze}>
+            <Sparkles />
+            Re-analyze
+          </Button>
+        </div>
+      </section>
+    );
+  if (!faq.length) return null;
+
+  const shown = showAll ? faq : faq.slice(0, FAQ_PREVIEW);
+  return (
+    <section className="faq" aria-label="Key questions">
+      {heading}
+      <ul className="faq-list">
+        {shown.map((entry, i) => {
+          const { icon: Icon, color } = faqStyles[entry.topic] ?? faqStyles.other;
+          const expanded = open.has(i);
+          const involved = entry.componentIds.flatMap((id) => byId.get(id) ?? []);
+          return (
+            <li key={entry.question} className={expanded ? "open" : undefined}>
+              <Button
+                variant="ghost"
+                className="faq-question"
+                aria-expanded={expanded}
+                aria-controls={`faq-${i}`}
+                onClick={() => toggle(i)}
+              >
+                <Icon size={14} className={color} />
+                <span>{entry.question}</span>
+                <ChevronDown size={14} className="faq-chevron" />
+              </Button>
+              {expanded && (
+                <div className="faq-answer" id={`faq-${i}`}>
+                  <AnswerText text={entry.answer} />
+                  {(involved.length > 0 || entry.paths.length > 0) && (
+                    <div className="faq-refs">
+                      {involved.slice(0, 4).map((c) => (
+                        <Button
+                          key={c.id}
+                          variant="link"
+                          className="p-0 h-5 text-[10px] text-primary"
+                          title={`Show ${c.name} on the map`}
+                          onClick={() => onInspect(c.id)}
+                        >
+                          <span className={`legend-dot ${c.type}`} />
+                          {c.name}
+                          <ArrowRight size={11} />
+                        </Button>
+                      ))}
+                      {entry.paths.map((path) => (
+                        <a
+                          key={path}
+                          className="faq-path"
+                          href={sourceUrl(
+                            path.replace(/\/$/, ""),
+                            path.endsWith("/") ? "tree" : "blob",
+                          )}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          {path.endsWith("/") ? <FolderGit2 size={11} /> : <FileCode2 size={11} />}
+                          {path}
+                        </a>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+      {faq.length > FAQ_PREVIEW && (
+        <Button
+          variant="ghost"
+          size="sm"
+          className="faq-more"
+          aria-expanded={showAll}
+          onClick={() => setShowAll((v) => !v)}
+        >
+          {showAll ? "Show fewer" : `Show all ${faq.length} questions`}
+          <ChevronDown size={12} className={showAll ? "rotate-180" : undefined} />
+        </Button>
+      )}
+    </section>
+  );
+}
+
+// Paragraphs and "- " lists, with `backticked` names set in code type.
+function AnswerText({ text }: { text: string }) {
+  const inline = (line: string) =>
+    line
+      .replace(/\*\*(.+?)\*\*/g, "$1")
+      .split(/`([^`]+)`/)
+      .map((part, i) => (i % 2 ? <code key={i}>{part}</code> : part));
+  const blocks: ReactNode[] = [];
+  let items: string[] = [];
+  const flush = () => {
+    if (!items.length) return;
+    blocks.push(
+      <ul key={blocks.length}>
+        {items.map((item, i) => (
+          <li key={i}>{inline(item)}</li>
+        ))}
+      </ul>,
+    );
+    items = [];
+  };
+  for (const line of text.split("\n").map((l) => l.trim())) {
+    if (!line) continue;
+    const item = /^[-*•]\s+(.*)$/.exec(line);
+    if (item) {
+      items.push(item[1]!);
+    } else {
+      flush();
+      blocks.push(<p key={blocks.length}>{inline(line)}</p>);
+    }
+  }
+  flush();
+  return <>{blocks}</>;
 }
 
 // One explore view: its graph once built, or why there isn't one.

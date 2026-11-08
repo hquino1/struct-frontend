@@ -96,7 +96,6 @@
 .sidebar-closed .brand { padding: 0 0 12px; flex-direction: column; justify-content: center; gap: 14px; }
 .sidebar-closed .sidebar-link { justify-content: center; padding: 0; width: 40px; }
 .sidebar-closed .project-link { height: 27px; }
-.sidebar-closed .visualization-nav { border-top: 1px solid var(--border); margin-top: 15px; padding-top: 15px; }
 .sidebar-closed .user-row { padding: 13px 0 0; justify-content: center; }
 .sidebar { background: var(--card); border-right: 1px solid var(--border); display: flex; flex-direction: column; position: sticky; top: 0; height: 100vh; padding: 24px 16px 16px; overflow-y: auto; z-index: 30; }
 .brand { display: flex; align-items: center; gap: 10px; font-size: 23px; font-weight: 750; padding: 0 4px 20px 12px; }
@@ -153,6 +152,12 @@
 .graph-tabs { display: flex; align-items: center; gap: 20px; height: 100%; }
 .graph-tab { border-radius: 0; height: 100%; padding: 0 1px; font-size: 11px; color: var(--muted-foreground); border-bottom: 2px solid transparent; }
 .graph-tab.selected { color: var(--foreground); border-bottom-color: var(--primary); }
+/* One row that scrolls sideways when the views don't fit, so the page itself never does. */
+.view-bar { display: flex; gap: 6px; padding: 9px 17px; border-bottom: 1px solid var(--border); background: var(--card); overflow-x: auto; scrollbar-width: none; }
+.view-bar::-webkit-scrollbar { display: none; }
+.view-bar .view-chip { flex-shrink: 0; height: 26px; padding: 0 9px; gap: 6px; font-size: 10px; font-weight: 500; white-space: nowrap; color: var(--muted-foreground); border: 1px solid var(--border); border-radius: 4px; }
+.view-bar .view-chip.selected { color: var(--foreground); border-color: var(--primary); background: color-mix(in oklab, var(--primary) 9%, transparent); }
+.view-bar .view-chip.unbuilt:not(.selected) { opacity: .55; }
 .graph-body { display: grid; grid-template-columns: minmax(0, 1fr) 255px; min-height: 540px; }
 .canvas { background-color: var(--canvas); background-image: radial-gradient(var(--grid) 1px, transparent 1px); background-size: 24px 24px; min-height: 540px; position: relative; overflow: hidden; cursor: grab; touch-action: pan-y; user-select: none; }
 .canvas.dragging { cursor: grabbing; }
@@ -228,8 +233,26 @@
 .insights-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 13px; }
 .insight { padding: 8px 22px 8px 0; border-right: 1px solid var(--border); }
 .insight:last-child { border-right: none; }
-.insight-top { display: flex; align-items: center; justify-content: space-between; }
-.insight-tag { font-size: 9px; color: var(--muted-foreground); }
+.faq { border: 1px solid var(--border); border-radius: 4px; background: var(--card); margin: 0 0 24px; overflow: hidden; }
+.faq-header { display: flex; align-items: center; justify-content: space-between; padding: 12px 17px; }
+.faq-header h2 { font-size: 13px; font-weight: 600; display: flex; gap: 8px; align-items: center; margin: 0; }
+.faq-list { list-style: none; margin: 0; padding: 0; }
+.faq-list > li { border-top: 1px solid var(--border); }
+.faq .faq-question { width: 100%; height: auto; min-height: 42px; padding: 10px 17px; justify-content: flex-start; gap: 10px; border-radius: 0; font-size: 12px; font-weight: 550; text-align: left; white-space: normal; }
+.faq-question > span { flex: 1; }
+.faq-chevron { color: var(--muted-foreground); transition: transform .15s; }
+.faq-list > li.open .faq-chevron { transform: rotate(180deg); }
+.faq-answer { padding: 0 17px 16px 41px; font-size: 11px; line-height: 1.8; color: var(--muted-foreground); }
+.faq-answer p, .faq-answer ul { margin: 0 0 6px; }
+.faq-answer ul { padding-left: 16px; list-style: disc; }
+.faq-answer code { font-family: var(--font-mono); font-size: 10px; color: var(--foreground); background: var(--secondary); padding: 1px 4px; border-radius: 3px; overflow-wrap: anywhere; }
+.faq-refs { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; margin-top: 10px; }
+.faq-path { display: inline-flex; align-items: center; gap: 5px; font-family: var(--font-mono); font-size: 9px; color: var(--muted-foreground); overflow-wrap: anywhere; }
+.faq-path:hover { color: var(--foreground); }
+.faq .faq-more { width: 100%; height: 34px; border-top: 1px solid var(--border); border-radius: 0; font-size: 10px; color: var(--muted-foreground); }
+.faq-empty { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 17px; border-top: 1px solid var(--border); font-size: 11px; color: var(--muted-foreground); }
+.faq-empty p { margin: 0; line-height: 1.7; }
+@media(max-width: 640px) { .faq-empty { flex-direction: column; align-items: flex-start; } .faq-answer { padding-left: 17px; } }
 .insight h3 { font-size: 11px; font-weight: 600; margin: 11px 0 6px; }
 .insight p { font-size: 10px; color: var(--muted-foreground); line-height: 1.8; margin: 0; }
 .footer { display: flex; justify-content: space-between; color: var(--muted-foreground); font-size: 9px; padding: 19px 0; }
@@ -283,8 +306,6 @@
 .login-form-wrap { width: 100%; max-width: 360px; margin: auto; padding: 40px 0; }
 .login-form-wrap h1 { font-size: 28px; font-weight: 650; margin: 0; line-height: 1.4; }
 .login-sub { color: var(--muted-foreground); font-size: 12px; margin: 6px 0 28px; }
-.login-divider { display: flex; align-items: center; gap: 12px; margin: 22px 0; color: var(--muted-foreground); font-size: 10px; }
-.login-divider::before, .login-divider::after { content: ''; flex: 1; border-top: 1px solid var(--border); }
 .login-label { display: block; font-size: 11px; font-weight: 600; margin: 0 0 7px; }
 .login-input { display: flex; align-items: center; gap: 9px; height: 38px; border: 1px solid var(--border); border-radius: 6px; padding: 0 11px; background: var(--card); color: var(--muted-foreground); margin-bottom: 16px; transition: border-color .15s, box-shadow .15s; }
 .login-input:focus-within { border-color: var(--primary); box-shadow: 0 0 0 3px color-mix(in oklab, var(--primary) 12%, transparent); }

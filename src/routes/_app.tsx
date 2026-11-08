@@ -16,33 +16,24 @@ import {
   ArrowRight,
   Bell,
   BookOpen,
-  Braces,
   Check,
   CheckCheck,
   ChevronRight,
-  Database,
   FolderGit2,
-  GitFork,
-  Globe,
   HelpCircle,
   Moon,
   MoreHorizontal,
-  AppWindow,
-  Network,
   PanelLeftClose,
   PanelLeftOpen,
   Plus,
   Search,
-  Sparkles,
   Sun,
-  Workflow,
 } from "lucide-react";
 import { BranchField } from "@/components/branch-field";
 import { Button } from "@/components/ui/button";
 import { Modal } from "@/components/modal";
 import { ShellContext } from "@/hooks/use-shell";
 import { useTheme } from "@/hooks/use-theme";
-import { views } from "@/lib/graph";
 import {
   useAnalysis,
   useCreateProject,
@@ -52,15 +43,28 @@ import {
   useProjects,
 } from "@/lib/projects";
 
+// beforeLoad runs on every navigation, even a search-param change, so the user's email is
+// fetched from Cognito once per signed-in user rather than on each click.
+let emailLookup: { userId: string; email: Promise<string | undefined> } | undefined;
+
 // Pathless layout: every signed-in page renders inside this sidebar + top bar shell.
 export const Route = createFileRoute("/_app")({
   // Cognito tokens live in browser storage, so the auth check has to run on the client.
   ssr: false,
   beforeLoad: async () => {
     try {
-      const { signInDetails } = await getCurrentUser();
-      const attributes = await fetchUserAttributes().catch(() => undefined);
-      return { userEmail: attributes?.email ?? signInDetails?.loginId ?? "" };
+      // Reads the stored session, so signing out still redirects on the next navigation.
+      const { userId, signInDetails } = await getCurrentUser();
+      if (emailLookup?.userId !== userId) {
+        emailLookup = {
+          userId,
+          email: fetchUserAttributes().then(
+            (attributes) => attributes.email,
+            () => undefined,
+          ),
+        };
+      }
+      return { userEmail: (await emailLookup.email) ?? signInDetails?.loginId ?? "" };
     } catch {
       throw redirect({ to: "/login" });
     }
@@ -68,10 +72,9 @@ export const Route = createFileRoute("/_app")({
   component: AppShell,
 });
 
-const viewIcons = [Network, AppWindow, GitFork, Braces, Database, ArrowRight, Globe, Workflow];
 const isMobile = () => window.matchMedia("(max-width: 700px)").matches;
 
-type ShellModal = "import" | "documentation" | "help" | "account" | "notifications";
+type ShellModal = "import" | "guide" | "help" | "account" | "notifications";
 
 function AppShell() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -89,12 +92,14 @@ function AppShell() {
   const search = useSearch({ strict: false });
   const location = useRouterState({ select: (s) => s.location });
   const active = projectId ? projects.find((p) => p.projectId === projectId) : undefined;
-  // Insights and the explore views only exist once the active project has been analyzed.
+  // Notifications only have something to say once the active project has been analyzed.
   const { data: analysis } = useAnalysis(active?.projectId);
   const analyzed = active && analysis?.status === "COMPLETE" ? active : undefined;
   // Shares the workspace's cached graph, so this costs no extra request there.
   const { data: graph } = useGraph(analyzed ? analysis : undefined);
-  const activeView = search.view ?? views[0];
+  // Where the breadcrumb says you are inside a project.
+  const section =
+    search.tab === "Documentation" ? "Documentation" : (search.view ?? "System architecture");
   const onProjectsPage = location.pathname === "/projects" || location.pathname === "/projects/";
 
   useEffect(() => {
@@ -172,25 +177,6 @@ function AppShell() {
               <span className="count sidebar-text">{projects.length}</span>
             </Link>
           </Button>
-          {analyzed && (
-            <Button
-              asChild
-              variant="ghost"
-              className={`sidebar-link ${search.tab === "Insights" ? "active" : ""}`}
-            >
-              <Link
-                to="/projects/$projectId"
-                params={{ projectId: analyzed.projectId }}
-                search={{ ...(search.view && { view: search.view }), tab: "Insights" }}
-                title="Insights"
-                aria-label="Insights"
-              >
-                <Sparkles />
-                <span className="sidebar-text">Insights</span>
-                <span className="count sidebar-text">3</span>
-              </Link>
-            </Button>
-          )}
           <div className="nav-label sidebar-text flex justify-between items-center">
             Projects
             <Button
@@ -241,45 +227,16 @@ function AppShell() {
               </Button>
             ))
           )}
-          {analyzed && (
-            <>
-              <div className="nav-label sidebar-text">Explore</div>
-              <div className="visualization-nav">
-                {views.map((v, i) => {
-                  const Icon = viewIcons[i] ?? Network;
-                  return (
-                    <Button
-                      key={v}
-                      asChild
-                      variant="ghost"
-                      className={`sidebar-link ${activeView === v ? "active" : ""}`}
-                    >
-                      <Link
-                        to="/projects/$projectId"
-                        params={{ projectId: analyzed.projectId }}
-                        search={{ view: v }}
-                        title={v}
-                        aria-label={v}
-                      >
-                        <Icon />
-                        <span className="sidebar-text">{v}</span>
-                      </Link>
-                    </Button>
-                  );
-                })}
-              </div>
-            </>
-          )}
           <div className="sidebar-bottom">
             <Button
               variant="ghost"
               className="sidebar-link"
-              title="Documentation"
-              aria-label="Documentation"
-              onClick={() => setModal("documentation")}
+              title="How Struct works"
+              aria-label="How Struct works"
+              onClick={() => setModal("guide")}
             >
               <BookOpen />
-              <span className="sidebar-text">Documentation</span>
+              <span className="sidebar-text">How Struct works</span>
             </Button>
             <Button
               variant="ghost"
@@ -333,7 +290,7 @@ function AppShell() {
                     <ChevronRight size={12} className="crumb-secondary text-muted-foreground" />
                     <span className="font-medium">{active?.name ?? "Project"}</span>
                     <ChevronRight size={12} className="crumb-secondary text-muted-foreground" />
-                    <span className="crumb-secondary text-muted-foreground">Overview</span>
+                    <span className="crumb-secondary text-muted-foreground">{section}</span>
                   </>
                 ) : (
                   <span className="font-medium">Projects</span>
@@ -377,16 +334,17 @@ function AppShell() {
           <Outlet />
         </div>
         {modal === "import" && <ImportModal onClose={closeModal} onToast={setToast} />}
-        {modal === "documentation" && (
-          <Modal title="Documentation" onClose={closeModal}>
+        {modal === "guide" && (
+          <Modal title="How Struct works" onClose={closeModal}>
             <p>
-              Explore a project through architecture, screens and the API calls behind them,
-              dependencies, function calls, database relationships, API interactions, cloud
-              infrastructure, and CI/CD views.
+              Each analyzed project opens with answers to key questions about the code, then its
+              graphs: the system architecture, plus screens, dependencies, function calls, database
+              schema, API interactions, cloud infrastructure, and CI/CD views. Switch between them
+              above the graph.
             </p>
             <p>
-              Select a component to inspect its entry point and connections. Export a map as JSON to
-              share your findings.
+              Select a component to inspect its entry point and connections, or open Documentation
+              for the project's key files. Export a map as JSON to share your findings.
             </p>
           </Modal>
         )}
@@ -400,18 +358,17 @@ function AppShell() {
                 </p>
                 {graph && (
                   <p>
-                    {graph.components.length} components mapped · {graph.insights.length}{" "}
-                    architecture insights available.
+                    {graph.components.length} components mapped
+                    {graph.faq && ` · ${graph.faq.length} key questions answered`}.
                   </p>
                 )}
                 <Button variant="outline" asChild>
                   <Link
                     to="/projects/$projectId"
                     params={{ projectId: analyzed.projectId }}
-                    search={{ ...(search.view && { view: search.view }), tab: "Insights" }}
                     onClick={closeModal}
                   >
-                    View insights
+                    View project
                     <ArrowRight />
                   </Link>
                 </Button>

@@ -167,12 +167,28 @@ export interface ArchitectureGraph {
     files: number;
   }[];
   connections: { from: string; to: string; label: string }[];
-  insights: {
-    title: string;
-    text: string;
-    kind: "Architecture" | "Attention" | "Best practice";
-    componentIds: string[];
-  }[];
+  // Answers to the questions a newcomer asks first; missing on runs from before the FAQ.
+  faq?: FaqEntry[];
+}
+
+export type FaqTopic =
+  | "overview"
+  | "connections"
+  | "endpoints"
+  | "data"
+  | "deployment"
+  | "risks"
+  | "onboarding"
+  | "other";
+
+export interface FaqEntry {
+  question: string;
+  // Plain text; lines starting with "- " are list items.
+  answer: string;
+  topic: FaqTopic;
+  componentIds: string[];
+  // Repository paths the answer points to; directories end in "/".
+  paths: string[];
 }
 
 export type GraphComponent = ArchitectureGraph["components"][number];
