@@ -193,6 +193,80 @@ export interface FaqEntry {
 
 export type GraphComponent = ArchitectureGraph["components"][number];
 
+// Most files one project can have documented.
+export const MAX_DOC_FILES = 25;
+
+export type DocsMode = "auto" | "manual";
+export type DocsStatus = "NOT_STARTED" | "QUEUED" | "RUNNING" | "COMPLETE" | "FAILED";
+
+export type KeyPartKind =
+  "function" | "class" | "component" | "hook" | "route" | "type" | "constant" | "config" | "other";
+
+// Generated documentation for one repository file.
+export interface FileDoc {
+  path: string;
+  // The commit the doc describes, for source links.
+  commit: string;
+  componentId?: string;
+  summary: string;
+  purpose: string;
+  keyParts: { name: string; kind: KeyPartKind; description: string; line?: number }[];
+  notes: string[];
+  // Files that import this one, and the ones it imports.
+  usedBy: string[];
+  dependsOn: string[];
+  // HTTP routes it serves, e.g. "GET /projects".
+  endpoints: string[];
+  // The file was longer than what was read to document it.
+  truncated: boolean;
+  generatedAt: string;
+}
+
+export interface DocsState {
+  // "auto" documents the suggested files on every analysis; "manual" the user's pick.
+  mode: DocsMode;
+  selection: string[];
+  status: DocsStatus;
+  total?: number;
+  done?: number;
+  // The commit the latest docs run documents.
+  commit?: string;
+  finishedAt?: string;
+  // Files that couldn't be documented in the latest run.
+  failed: string[];
+  error?: string;
+  docs: FileDoc[];
+}
+
+export interface DocSuggestion {
+  path: string;
+  // Why it was picked, e.g. "Entry point of API · Imported by 12 files".
+  reason: string;
+}
+
+// Every documentable file of the latest analysis, for the file picker.
+export interface RepoFiles {
+  commit: string;
+  paths: string[];
+  suggestions: DocSuggestion[];
+}
+
+export function getDocs(projectId: string) {
+  return apiFetch<DocsState>(`/projects/${encodeURIComponent(projectId)}/docs`);
+}
+
+export function getRepoFiles(projectId: string) {
+  return apiFetch<RepoFiles>(`/projects/${encodeURIComponent(projectId)}/files`);
+}
+
+// Saves which files to document and starts writing their docs.
+export function updateDocs(projectId: string, input: { mode: DocsMode; paths?: string[] }) {
+  return apiFetch<DocsState>(`/projects/${encodeURIComponent(projectId)}/docs`, {
+    method: "PUT",
+    body: JSON.stringify(input),
+  });
+}
+
 export function getGraph(projectId: string) {
   return apiFetch<ArchitectureGraph>(`/projects/${encodeURIComponent(projectId)}/graph`);
 }

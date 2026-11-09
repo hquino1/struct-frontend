@@ -5,16 +5,21 @@ import {
   createProject,
   deleteProject,
   getAnalysis,
+  getDocs,
   getGitHubConnection,
   getGraph,
+  getRepoFiles,
   getView,
   listProjectBranches,
   listProjects,
   listRepositoryBranches,
   startAnalysis,
+  updateDocs,
   updateProject,
   type Analysis,
   type CreateProjectInput,
+  type DocsMode,
+  type DocsState,
   type GitHubConnection,
   type Project,
   type UpdateProjectInput,
@@ -66,7 +71,7 @@ export function useDeleteProject() {
         list?.filter((p) => p.projectId !== projectId),
       );
       // Stops analysis polling and drops the project's cached graph and views.
-      for (const key of ["analysis", "graph", "view", "branches"]) {
+      for (const key of ["analysis", "graph", "view", "branches", "docs", "files"]) {
         queryClient.removeQueries({ queryKey: [key, projectId] });
       }
       if (getLastProjectId() === projectId) clearLastProjectId();
@@ -216,5 +221,52 @@ export function useView(analysis: Analysis | null | undefined, view: ViewId | un
     queryFn: () => getView(analysis!.projectId, view!),
     enabled: analysis?.status === "COMPLETE" && !!view && analysis.views?.[view] === "COMPLETE",
     staleTime: Infinity,
+  });
+}
+
+export const isDocsActive = (docs: DocsState | undefined) =>
+  docs?.status === "QUEUED" || docs?.status === "RUNNING";
+
+// How long after an analysis finishes to keep checking for the docs run it starts.
+const DOCS_START_WINDOW_MS = 2 * 60_000;
+
+// Polls while docs are being written, and just after an analysis completes, whose docs run
+// starts a moment later.
+export function useDocs(analysis: Analysis | null | undefined) {
+  const projectId = analysis?.projectId;
+  return useQuery({
+    queryKey: ["docs", projectId],
+    queryFn: () => getDocs(projectId!),
+    enabled: analysis?.status === "COMPLETE",
+    refetchInterval: (query) => {
+      const docs = query.state.data;
+      if (isDocsActive(docs)) return 3000;
+      const finished = Date.parse(analysis?.finishedAt ?? "");
+      const awaitingRun =
+        !!analysis?.commit &&
+        docs?.commit !== analysis.commit &&
+        Date.now() - finished < DOCS_START_WINDOW_MS;
+      return awaitingRun ? 3000 : false;
+    },
+  });
+}
+
+// The picker's file list; fetched only once it is opened.
+export function useRepoFiles(analysis: Analysis | null | undefined, enabled: boolean) {
+  return useQuery({
+    queryKey: ["files", analysis?.projectId, analysis?.analysisId],
+    queryFn: () => getRepoFiles(analysis!.projectId),
+    enabled: enabled && analysis?.status === "COMPLETE",
+    staleTime: Infinity,
+  });
+}
+
+export function useUpdateDocs(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { mode: DocsMode; paths?: string[] }) => updateDocs(projectId, input),
+    onSuccess: (docs) => {
+      queryClient.setQueryData(["docs", projectId], docs);
+    },
   });
 }

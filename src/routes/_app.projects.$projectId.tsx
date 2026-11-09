@@ -33,6 +33,7 @@ import { Modal } from "@/components/modal";
 import { FieldKey } from "@/components/field-key";
 import { GraphCanvas } from "@/components/graph-canvas";
 import { BranchSwitcher } from "@/components/branch-switcher";
+import { DocsPanel } from "@/components/docs-panel";
 import { ProjectActions } from "@/components/project-dialogs";
 import { useShell } from "@/hooks/use-shell";
 import {
@@ -65,6 +66,7 @@ import {
   repoPath,
   setLastProjectId,
   useAnalysis,
+  useDocs,
   useGraph,
   useProjects,
   useStartAnalysis,
@@ -76,9 +78,11 @@ type Tab = (typeof tabs)[number];
 
 export const Route = createFileRoute("/_app/projects/$projectId")({
   // The view and tab live in the URL so the sidebar can link to them and reloads keep them.
-  validateSearch: (search: Record<string, unknown>): { view?: View; tab?: Tab } => ({
+  validateSearch: (search: Record<string, unknown>): { view?: View; tab?: Tab; doc?: string } => ({
     ...(views.includes(search["view"] as View) && { view: search["view"] as View }),
     ...(tabs.includes(search["tab"] as Tab) && { tab: search["tab"] as Tab }),
+    // The open file in Documentation.
+    ...(typeof search["doc"] === "string" && search["doc"] && { doc: search["doc"] }),
   }),
   head: () => ({
     meta: [
@@ -388,15 +392,22 @@ const typeCounts: Record<ComponentType, [string, string]> = {
   external: ["integration", "integrations"],
 };
 
-// Links into the analyzed commit, so paths match what the map was built from.
-const githubUrl = (project: Project, analysis: Analysis, path: string, kind: "blob" | "tree") =>
-  `${project.repoUrl}/${kind}/${analysis.commit ?? encodeURIComponent(project.branch)}/${path
+// Links into the analyzed commit, so paths match what the map was built from. Docs pass the
+// commit they were written for.
+const githubUrl = (
+  project: Project,
+  analysis: Analysis,
+  path: string,
+  kind: "blob" | "tree",
+  commit = analysis.commit,
+) =>
+  `${project.repoUrl}/${kind}/${commit ?? encodeURIComponent(project.branch)}/${path
     .split("/")
     .map(encodeURIComponent)
     .join("/")}`;
 
 function Workspace({ project, analysis }: { project: Project; analysis: Analysis }) {
-  const { view = "System architecture", tab = "Graphs" } = Route.useSearch();
+  const { view = "System architecture", tab = "Graphs", doc } = Route.useSearch();
   const navigate = useNavigate({ from: Route.fullPath });
   // Switching graphs or sections only swaps the panel, so keep the scroll position.
   const setView = (v: View) => void navigate({ search: { view: v }, resetScroll: false });
@@ -430,8 +441,13 @@ function Workspace({ project, analysis }: { project: Project; analysis: Analysis
     void navigate({ search: {}, resetScroll: false });
     graphRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
-  const sourceUrl = (path: string, kind: "blob" | "tree") =>
-    githubUrl(project, analysis, path, kind);
+  const sourceUrl = (path: string, kind: "blob" | "tree", commit?: string) =>
+    githubUrl(project, analysis, path, kind, commit);
+  // Opens a file's doc in the Documentation section.
+  const openDoc = (path: string) =>
+    void navigate({ search: { tab: "Documentation", doc: path }, resetScroll: false });
+  const { data: docs } = useDocs(analysis);
+  const documented = useMemo(() => new Set(docs?.docs.map((d) => d.path)), [docs]);
   const analyze = () =>
     start.mutate(undefined, {
       onError: (err) => showToast(err.message),
@@ -606,6 +622,11 @@ function Workspace({ project, analysis }: { project: Project; analysis: Analysis
           faq={faq}
           byId={byId}
           sourceUrl={sourceUrl}
+          documented={documented}
+          onOpenDoc={(path) => {
+            openDoc(path);
+            graphRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+          }}
           onInspect={inspect}
           analyzing={start.isPending}
           onAnalyze={analyze}
@@ -705,44 +726,18 @@ function Workspace({ project, analysis }: { project: Project; analysis: Analysis
               )
             )
           ) : (
-            <div className="insights-expanded">
-              <div className="flex items-center justify-between gap-4 mb-1">
-                <h2 className="text-sm font-semibold">Key files</h2>
-                <span className="text-muted-foreground text-xs">
-                  {plural(components.filter((c) => c.entryPoint).length, "component entry point")}
-                </span>
-              </div>
-              <p className="text-muted-foreground text-[11px] mb-6">
-                The file to open first for each component. Select one to see it on the map.
-              </p>
-              {components
-                .filter((c) => c.entryPoint)
-                .filter((c) =>
-                  `${c.name} ${c.entryPoint} ${c.paths.join(" ")}`
-                    .toLowerCase()
-                    .includes(query.toLowerCase()),
-                )
-                .map((c) => (
-                  <Button
-                    key={c.id}
-                    variant="ghost"
-                    className="flex w-full justify-start h-14 border-b border-border rounded-none"
-                    onClick={() => inspect(c.id)}
-                  >
-                    <FileCode2 className="text-primary" />
-                    <span className="flex flex-col items-start min-w-0">
-                      <span className="font-mono text-xs truncate max-w-full">{c.entryPoint}</span>
-                      <span className="text-muted-foreground text-[10px]">{c.name}</span>
-                    </span>
-                    <span className="ml-auto text-muted-foreground text-[10px]">
-                      {plural(c.files, "file")}
-                    </span>
-                    <ChevronRight />
-                  </Button>
-                ))}
-            </div>
+            <DocsPanel
+              analysis={analysis}
+              byId={byId}
+              selectedPath={doc}
+              onSelectPath={openDoc}
+              sourceUrl={sourceUrl}
+              onInspect={inspect}
+              analyzing={start.isPending}
+              onAnalyze={analyze}
+            />
           ))}
-        <div className="legend">
+        <div className={`legend ${tab === "Graphs" ? "" : "hidden"}`}>
           {(meta && tab === "Graphs"
             ? Object.values(meta.kinds).map((k) => [k.tone, k.label] as const)
             : (["frontend", "service", "data", "external"] as const).map(
@@ -989,6 +984,8 @@ function Faq({
   faq,
   byId,
   sourceUrl,
+  documented,
+  onOpenDoc,
   onInspect,
   analyzing,
   onAnalyze,
@@ -996,6 +993,9 @@ function Faq({
   faq: FaqEntry[] | undefined;
   byId: Map<string, GraphComponent>;
   sourceUrl: (path: string, kind: "blob" | "tree") => string;
+  // Files with docs, whose references open the doc instead of GitHub.
+  documented: Set<string>;
+  onOpenDoc: (path: string) => void;
   onInspect: (id: string) => void;
   analyzing: boolean;
   onAnalyze: () => void;
@@ -1077,21 +1077,38 @@ function Faq({
                           <ArrowRight size={11} />
                         </Button>
                       ))}
-                      {entry.paths.map((path) => (
-                        <a
-                          key={path}
-                          className="faq-path"
-                          href={sourceUrl(
-                            path.replace(/\/$/, ""),
-                            path.endsWith("/") ? "tree" : "blob",
-                          )}
-                          target="_blank"
-                          rel="noreferrer"
-                        >
-                          {path.endsWith("/") ? <FolderGit2 size={11} /> : <FileCode2 size={11} />}
-                          {path}
-                        </a>
-                      ))}
+                      {entry.paths.map((path) =>
+                        documented.has(path) ? (
+                          <Button
+                            key={path}
+                            variant="link"
+                            className="faq-path h-auto p-0"
+                            title="Open its documentation"
+                            onClick={() => onOpenDoc(path)}
+                          >
+                            <BookOpen size={11} />
+                            {path}
+                          </Button>
+                        ) : (
+                          <a
+                            key={path}
+                            className="faq-path"
+                            href={sourceUrl(
+                              path.replace(/\/$/, ""),
+                              path.endsWith("/") ? "tree" : "blob",
+                            )}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            {path.endsWith("/") ? (
+                              <FolderGit2 size={11} />
+                            ) : (
+                              <FileCode2 size={11} />
+                            )}
+                            {path}
+                          </a>
+                        ),
+                      )}
                     </div>
                   )}
                 </div>
