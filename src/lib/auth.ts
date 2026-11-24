@@ -4,11 +4,12 @@ import { defaultStorage, sessionStorage } from "aws-amplify/utils";
 
 // Public Cognito app client (no secret), so these IDs are safe to ship to the browser.
 // The app client must have ALLOW_USER_SRP_AUTH and ALLOW_REFRESH_TOKEN_AUTH enabled.
+// Another deployment (backend/deploy/stack) sets its own IDs at build time.
 Amplify.configure({
   Auth: {
     Cognito: {
-      userPoolId: "us-east-2_o5P6JAFRX",
-      userPoolClientId: "1sl1hc6admp0vbt0med838sdke",
+      userPoolId: import.meta.env["VITE_COGNITO_USER_POOL_ID"] || "us-east-2_o5P6JAFRX",
+      userPoolClientId: import.meta.env["VITE_COGNITO_CLIENT_ID"] || "1sl1hc6admp0vbt0med838sdke",
       loginWith: { email: true },
       signUpVerificationMethod: "code",
     },
